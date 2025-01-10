@@ -26,6 +26,21 @@ import time
 import numpy as np
 import pandas as pd
 
+def arg_parser():
+        # accept a vcf file name as input
+    parser = argparse.ArgumentParser(description='Filter a TSV file from dna-seq-varlociraptor')
+    parser.add_argument('--input', type=str, help='TSV file name')
+    parser.add_argument('--output', type=str, help='Output folder location', default=None)
+    args = parser.parse_args()
+
+    # Determine the output folder
+    if args.output is None:
+        args.output = os.path.dirname(args.input)
+        # Create the output folder if it doesn't exist
+        if not os.path.exists(args.output):
+            os.makedirs(args.output)
+
+    return args
 
 
 def pandas_to_saved_zarr(df, output_folder):
@@ -74,23 +89,16 @@ def main():
     - The function logs the process and saves the log file with a timestamped name.
     """
 
-    # accept a vcf file name as input
-    parser = argparse.ArgumentParser(description='Filter a TSV file from dna-seq-varlociraptor')
-    parser.add_argument('--input', type=str, help='TSV file name')
-    parser.add_argument('--output', type=str, help='Output folder location', default=None)
-    args = parser.parse_args()
-
-    # Determine the output folder
-    if args.output is None:
-        args.output = os.path.dirname(args.input)
-        # Create the output folder if it doesn't exist
-        if not os.path.exists(args.output):
-            os.makedirs(args.output)
+    args = arg_parser()
 
     # Create a logs folder inside the output folder if it does not exist
     logs_folder = os.path.join(args.output, 'logs')
     if not os.path.exists(logs_folder):
         os.makedirs(logs_folder)
+
+    # create a string for the log file name with the current date and time
+    log_file_name = time.strftime("%Y%m%d-%H%M%S") + '_log_tsv_to_zarr_' + os.path.basename(args.input).split('.')[0] + '.txt'
+    args.logpath = os.path.join(logs_folder, log_file_name)
 
     # set up logging
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
@@ -98,9 +106,7 @@ def main():
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
 
-    # create a string for the log file name with the current date and time
-    log_file_name = time.strftime("%Y%m%d-%H%M%S") + '_log_tsv_to_zarr_' + os.path.basename(args.input).split('.')[0] + '.txt'
-    args.logpath = os.path.join(logs_folder, log_file_name)
+
 
     # create a file handler
     handler = logging.FileHandler(args.logpath)

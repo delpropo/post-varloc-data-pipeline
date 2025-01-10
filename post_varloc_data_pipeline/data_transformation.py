@@ -237,8 +237,16 @@ def argument_parser():
     """
     parser = argparse.ArgumentParser(description='transform or filter a file')
     parser.add_argument('--input', type=str, help='zarr folder name or names')
-    parser.add_argument('--output', type=str, help='Output file name')
+    parser.add_argument('--output', type=str, help='Output folder location', default=None)
     args = parser.parse_args()
+
+    # Determine the output folder
+    if args.output is None:
+        args.output = os.path.dirname(args.input)
+        # Create the output folder if it doesn't exist
+        if not os.path.exists(args.output):
+            os.makedirs(args.output)
+
 
     # determine if the file ends with .zarr, tsv, or csv add the information to the args
     if args.input.endswith('.tsv'):
@@ -256,19 +264,25 @@ def argument_parser():
 
 
 
-def logger_setup():
+def logger_setup(args, log_file_prefix: str = ""):
     """
     set up the logger
     logger: the logger
-
     """
+    # Create a logs folder inside the output folder if it does not exist
+    logs_folder = os.path.join(args.output, 'logs')
+    if not os.path.exists(logs_folder):
+        os.makedirs(logs_folder)
+
     # set up logging
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
     logger = logging.getLogger(__name__)
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     # create a file handler
-    handler = logging.FileHandler('log_data_transformation.txt')
+    # create a string for the log file name with the current date and time
+    log_file_name = os.path.join(logs_folder, time.strftime("%Y%m%d-%H%M%S") + f'{log_file_prefix}_log_data_transformation.txt')
+    handler = logging.FileHandler(log_file_name)
     handler.setLevel(logging.INFO)
     # create a logging format
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -489,10 +503,8 @@ def main():
 
     # parse the arguments
     args = argument_parser()
-
     # set up the logger
-    logger = logger_setup()
-
+    logger = logger_setup(args)
 
     # setup the output file name
     if args.output:
@@ -502,7 +514,6 @@ def main():
 
     if not output_file.endswith('.tsv'):
         output_file = output_file + '.tsv'
-
 
     # parse the input with space as the delimiter
     input_files = args.input.split(' ')
@@ -515,7 +526,6 @@ def main():
         else:
             logger.info('confirmed zarr files')
             logger.info(f"input files: {input_files}\noutput file: {output_file}")
-
 
     print("completed input.  now load the zarr folder")
 
