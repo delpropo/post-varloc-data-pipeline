@@ -82,16 +82,13 @@ def main():
 
     # Determine the output folder
     if args.output is None:
-        output_folder = os.path.dirname(args.input)
-    else:
-        output_folder = args.output
-
-      # Create the output folder if it doesn't exist
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
+        args.output = os.path.dirname(args.input)
+        # Create the output folder if it doesn't exist
+        if not os.path.exists(args.output):
+            os.makedirs(args.output)
 
     # Create a logs folder inside the output folder if it does not exist
-    logs_folder = os.path.join(output_folder, 'logs')
+    logs_folder = os.path.join(args.output, 'logs')
     if not os.path.exists(logs_folder):
         os.makedirs(logs_folder)
 
@@ -103,10 +100,10 @@ def main():
 
     # create a string for the log file name with the current date and time
     log_file_name = time.strftime("%Y%m%d-%H%M%S") + '_log_tsv_to_zarr_' + os.path.basename(args.input).split('.')[0] + '.txt'
-    log_file_path = os.path.join(logs_folder, log_file_name)
+    args.logpath = os.path.join(logs_folder, log_file_name)
 
     # create a file handler
-    handler = logging.FileHandler(log_file_path)
+    handler = logging.FileHandler(args.logpath)
     handler.setLevel(logging.INFO)
 
     # create a logging format
@@ -166,7 +163,7 @@ def main():
         sys.exit(1)
 
 
-    df_zarr = pandas_to_saved_zarr(df, output_folder)
+    df_zarr = pandas_to_saved_zarr(df, args.output)
 
     # close the logging file
     logger.info('Completed process and closing log file')
