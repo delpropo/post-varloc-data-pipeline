@@ -268,7 +268,9 @@ def logger_setup():
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     # create a file handler
-    handler = logging.FileHandler('log.txt')
+    # create a string for the log file name with the current date and time
+    log_file_name = time.strftime("%Y%m%d-%H%M%S") + '_log_data_transformation_eunc.txt'
+    handler = logging.FileHandler(log_file_name)
     handler.setLevel(logging.INFO)
     # create a logging format
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -525,6 +527,7 @@ def main():
     xr_df = open_zarr_to_xarray(input_files[0])
     print("the time is now: ", datetime.datetime.now())
     print("completed loading zarr file")
+    input_file_folder = os.path.dirname(input_files[0])
 
     # drop columns that are not needed to save space
     xr_df = drop_columns(xr_df)
@@ -570,7 +573,9 @@ def main():
     # filtered_xr_df = groupby_genome_location(filtered_xr_df)
     file_name = filtered_xr_df["filename"].values[0]
     print("filtered_xr_df size after groupby: ", filtered_xr_df.info)
-    filtered_xr_df.to_csv(f"genome_location_groupby_{file_name}", sep="\t")
+    # create the final file save location by joining the input_file_folder with genome_location_groupby_{file_name}
+    final_file_name = os.path.join(input_file_folder, f"genome_location_groupby_{file_name}")
+    filtered_xr_df.to_csv(final_file_name, sep="\t")
     print("completed groupby_genome_location function ", datetime.datetime.now())
     # print all rows the the value  135762167 in the column "position"
 

@@ -268,7 +268,7 @@ def logger_setup():
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     # create a file handler
-    handler = logging.FileHandler('log.txt')
+    handler = logging.FileHandler('log_data_transformation.txt')
     handler.setLevel(logging.INFO)
     # create a logging format
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
