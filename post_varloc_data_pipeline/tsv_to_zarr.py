@@ -17,13 +17,13 @@ Notes for running this script:
 
 """
 import xarray as xr
-import zarr
+# import zarr
 import sys
-import os
+# import os
 import argparse
 import logging
 import time
-import numpy as np
+# import numpy as np
 import pandas as pd
 
 

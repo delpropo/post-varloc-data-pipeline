@@ -1,21 +1,29 @@
 name: post-varloc-data-pipeline
 channels:
   - conda-forge
+  - bioconda
 dependencies:
   - python=3.10
   - black
   - flake8
   - isort
   - pip
+  - pandas
   - typer
   - loguru
   - tqdm
-  # - ipython
-  # - jupyterlab
-  # - matplotlib
-  # - notebook
-  # - scikit-learn
+  - ipython
+  - scikit-learn
   - xarray
+  - openpyxl
+
+  # removed forever
+  #  - jupyterlab
+#  - matplotlib
+#  - notebook
+  # - zarr
+  # - dask
+
   - pip:
     - python-dotenv
     - mkdocs

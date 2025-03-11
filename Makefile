@@ -16,10 +16,13 @@ PYTHON_INTERPRETER = python
 requirements:
 	conda env update --name $(PROJECT_NAME) --file environment.yml --prune -v
 
-## Install Python Dependencies
+## Install Python Dependencies to be run if there is a failure.  Uses debug partition to use more memory.
 .PHONY: requirements_failure
 requirements_failure:
-	mamba env update --name $(PROJECT_NAME) --file environment.yml --prune -v
+	srun  --partition=debug --pty -c 1 --mem=4g --time=00:30:00 bash -c "conda env update --name $(PROJECT_NAME) --file environment.yml --prune -v"
+	# works if failue was due to lack of memory on login node.
+
+
 
 ## Activate environment
 .PHONY: activate
@@ -114,17 +117,42 @@ clean_synlinks:
 	done
 
 ## run tsv_to_zarr.py using slurm
-.PHONY: slurm_tsv_to_zarr
-slurm_tsv_to_zarr:
+.PHONY: tsv_to_zarr
+tsv_to_zarr:
 	for file in data/raw/*; do \
 		echo "raw data file: " $$file; \
 		read -p "Do you want to create a zarr file from this file? (y/n) " choice; \
 		if [ "$$choice" = "y" ]; then \
-			echo "$(PYTHON_INTERPRETER) post_varloc_data_pipeline/tsv_to_zarr.py --input $$file"; \
+			$(PYTHON_INTERPRETER) post_varloc_data_pipeline/tsv_to_zarr.py --input $$file; \
 		else \
 			echo "$$file skipped"; \
 		fi; \
 	done
+
+## run tsv_to_zarr.py using slurm by creating a slurm script and running it.
+.PHONY: slurm_tsv_to_zarr
+slurm_tsv_to_zarr:
+	for file in data/raw/*; do \
+		echo "raw data file: " $$file; \
+		file_size_gb=$(du -BG $$file | cut -f1 | sed 's/G//'); \
+		echo "File size: $$file_size_gb GB"; \
+		file_size_gb=$$((file_size_gb * 10)); \
+		read -p "Do you want to create a zarr file from this file? (y/n) " choice; \
+		if [ "$$choice" = "y" ]; then \
+			$(PYTHON_INTERPRETER) post_varloc_data_pipeline/tsv_to_zarr.py --input $$file; \
+		else \
+			echo "$$file skipped"; \
+		fi; \
+	done
+
+#!/bin/bash
+
+# export PATH="/home/delpropo/miniconda3/etc/profile.d/conda.sh"
+#source /home/delpropo/.bashrc
+#export TMPDIR=/scratch/sooeunc_root/sooeunc0/delpropo
+
+#conda activate sgkit_env
+
 
 ## run tsv_to_zarr.py using slurm
 .PHONY: config_test

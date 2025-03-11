@@ -240,14 +240,6 @@ def argument_parser():
     parser.add_argument('--output', type=str, help='Output folder location', default=None)
     args = parser.parse_args()
 
-    # Determine the output folder
-    if args.output is None:
-        args.output = os.path.dirname(args.input)
-        # Create the output folder if it doesn't exist
-        if not os.path.exists(args.output):
-            os.makedirs(args.output)
-
-
     # determine if the file ends with .zarr, tsv, or csv add the information to the args
     if args.input.endswith('.tsv'):
         args.input_type = 'tsv'
@@ -257,6 +249,17 @@ def argument_parser():
         args.input_type = 'csv'
     else:
         raise ValueError("Input file must end with .tsv, .zarr, or .csv")
+
+    # Determine the output folder
+    if args.output is None:
+        args.output = os.path.dirname(args.input)
+        # Create the output folder if it doesn't exist
+        if not os.path.exists(args.output):
+            os.makedirs(args.output)
+    else:
+        # Confirm that args.output is a folder
+        if not os.path.isdir(args.output):
+            raise ValueError("Output path must be a directory")
 
     return args
 
@@ -536,7 +539,7 @@ def main():
     xr_df = open_zarr_to_xarray(input_files[0])
     print("the time is now: ", datetime.datetime.now())
     print("completed loading zarr file")
-    input_file_folder = os.path.dirname(input_files[0])
+    # input_file_folder = os.path.dirname(input_files[0])
 
     # drop columns that are not needed to save space
     xr_df = drop_columns(xr_df)
@@ -583,7 +586,7 @@ def main():
     file_name = filtered_xr_df["filename"].values[0]
     print("filtered_xr_df size after groupby: ", filtered_xr_df.info)
     # create the final file save location by joining the input_file_folder with genome_location_groupby_{file_name}
-    final_file_name = os.path.join(input_file_folder, f"genome_location_groupby_{file_name}")
+    final_file_name = os.path.join(args.output, f"genome_location_groupby_{file_name}")
     filtered_xr_df.to_csv(final_file_name, sep="\t")
     print("completed groupby_genome_location function ", datetime.datetime.now())
     # print all rows the the value  135762167 in the column "position"
