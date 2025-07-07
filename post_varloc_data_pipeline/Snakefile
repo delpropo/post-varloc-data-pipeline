@@ -1,0 +1,44 @@
+# Snakefile template for your workflow
+
+# Configurable input file listing BCF/VCF files
+configfile: "../config/config.yaml"
+
+# Read the list of BCF/VCF files from a text file
+with open(config["input_list"]) as f:
+    SAMPLES = [line.strip() for line in f if line.strip()]
+
+rule all:
+    input:
+        "../data/processed/final_output.tsv"
+
+rule bcf_to_tsv:
+    input:
+        bcf="{bcf_file}"
+    output:
+        tsv="../data/interim/tsv/{bcf_file}.tsv"
+    shell:
+        "bash ../post_varloc_data_pipeline/vembrane_processing.sh {input.bcf} {output.tsv}"
+
+rule tsv_to_zarr:
+    input:
+        tsv="../data/interim/tsv/{bcf_file}.tsv"
+    output:
+        zarr="../data/interim/zarr/{bcf_file}.zarr"
+    shell:
+        "python ../post_varloc_data_pipeline/tsv_to_zarr.py {input.tsv} {output.zarr}"
+
+rule process_zarr:
+    input:
+        zarr="../data/interim/zarr/{bcf_file}.zarr"
+    output:
+        tsv="../data/interim/processed_tsv/{bcf_file}.processed.tsv"
+    shell:
+        "python ../post_varloc_data_pipeline/process_zarr.py {input.zarr} {output.tsv}"
+
+rule combine_tsv:
+    input:
+        tsves=expand("../data/interim/processed_tsv/{bcf_file}.processed.tsv", bcf_file=[s.split("/")[-1].replace(".bcf","").replace(".vcf","") for s in SAMPLES])
+    output:
+        combined="../data/processed/final_output.tsv"
+    shell:
+        "python ../post_varloc_data_pipeline/combine_tsv.py {input.tsves} {output.combined}"

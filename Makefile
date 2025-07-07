@@ -16,13 +16,17 @@ PYTHON_INTERPRETER = python
 requirements:
 	conda env update --name $(PROJECT_NAME) --file environment.yml --prune -v
 
-## Install Python Dependencies to be run if there is a failure.  Uses debug partition to use more memory.
+## Install Python Dependencies to be run if there is a failure.
 .PHONY: requirements_failure
 requirements_failure:
-	srun  --partition=debug --pty -c 1 --mem=4g --time=00:30:00 bash -c "conda env update --name $(PROJECT_NAME) --file environment.yml --prune -v"
+	srun  --partition=standard --pty -c 1 --mem=4g --time=00:30:00 bash -c "conda env update --name $(PROJECT_NAME) --file environment.yml --prune -v"
 	# works if failue was due to lack of memory on login node.
 
-
+## Install Python Dependencies to be run if there is a failure.
+.PHONY: mamba_requirements_failure
+mamba_requirements_failure:
+	srun  --partition=standard --pty -c 1 --mem=14g --time=00:30:00 bash -c "mamba env update --name $(PROJECT_NAME) --file environment.yml --prune -v"
+	# works if failue was due to lack of memory on login node.
 
 ## Activate environment
 .PHONY: activate
@@ -64,6 +68,10 @@ create_environment:
 #################################################################################
 # PROJECT RULES                                                                 #
 #################################################################################
+## Make TSV files from bcf or vcf
+.PHONY: create_tsv
+create_tsv:
+	srun  --partition=standard --pty -c 1 --mem=7g --time=00:30:00 bash -c "bash post_varloc_data_pipeline/vembrane_processing.sh config/test_bcf_file.txt"
 
 
 ## Make Dataset

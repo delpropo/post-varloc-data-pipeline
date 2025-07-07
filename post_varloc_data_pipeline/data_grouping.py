@@ -54,7 +54,7 @@ def counting_variant_occurrences(df: pd.DataFrame) -> pd.DataFrame:
     df['location_occurance_across_families'] = df.groupby(['chromosome', 'position'])['position'].transform('count')
 
     # Reorder columns
-    starting_columns = ['chromosome', 'position', 'allele', 'reference allele', 'family', 'symbol', 'variant_class', 'impact', 'max_af', 'gnomadg_af', 'variant_occurance_between_families_count', 'unique_alternative_allele_count', 'location_occurance_across_families']
+    starting_columns = ['chromosome', 'position', 'allele', 'reference allele', 'hgvsg', 'protein alteration (short)' 'family', 'symbol', 'variant_class', 'impact', 'max_af', 'gnomadg_af', 'variant_occurance_between_families_count', 'unique_alternative_allele_count', 'location_occurance_across_families']
     read_depth_prob_filename_columns = [col for col in df.columns if any(x in col for x in ["read depth", "prob:", "filename"])]
     allele_frequency_columns = [col for col in df.columns if ": allele frequency" in col]
     observations_columns = [col for col in df.columns if "observations" in col]
@@ -140,7 +140,7 @@ def main():
         # print out the number of rows which have 'variant_occurance_between_families_count' equal to i
         logger.info(f"Number of rows with 'variant_occurance_between_families_count' equal to {i}: {combined_df[combined_df['variant_occurance_between_families_count'] == i].shape[0]}")
 
-    removal_number = 5
+    removal_number = 4
     # remove all rows where 'variant_occurance_between_families_count' is greater than removal_number
     combined_df = combined_df[combined_df['variant_occurance_between_families_count'] <= removal_number]
     # print out the number of rows removed
@@ -161,8 +161,10 @@ def main():
     save_file = sorted_family_string + '_grouped_data.tsv'
     output_file = os.path.join(grouped_folder, save_file)
     combined_df.to_csv(output_file, sep='\t', index=False)
-
     logger.info(f"Combined data saved to {output_file}")
+
+
+
 
     # print out a count of the number of rows in the dataframe for each family for each chromosome
     for family in combined_df['family'].unique():

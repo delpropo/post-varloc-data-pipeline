@@ -1,0 +1,5 @@
+old_column_name,new_column_name
+# Add your mappings below, one per line
+# Example:
+# oldname1,newname1
+# oldname2,newname2
