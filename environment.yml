@@ -17,7 +17,7 @@ dependencies:
   - xarray
   - openpyxl
   - zarr
-  - vembrane=2.0.0
+  - vembrane=2.1.0
 
   # removed forever
   #  - jupyterlab

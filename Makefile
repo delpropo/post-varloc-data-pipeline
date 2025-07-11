@@ -54,7 +54,6 @@ format:
 
 
 
-
 ## Set up python interpreter environment
 .PHONY: create_environment
 create_environment:
@@ -69,9 +68,26 @@ create_environment:
 # PROJECT RULES                                                                 #
 #################################################################################
 ## Make TSV files from bcf or vcf
-.PHONY: create_tsv
+.PHONY: slurm_create_tsv
 create_tsv:
-	srun  --partition=standard --pty -c 1 --mem=7g --time=00:30:00 bash -c "bash post_varloc_data_pipeline/vembrane_processing.sh config/test_bcf_file.txt"
+	@read -p "Enter the name of the text file in the config folder (e.g., test_bcf_file.txt): " config_file; \
+	if [ ! -f "config/$$config_file" ]; then \
+		echo "File config/$$config_file does not exist!"; \
+		exit 1; \
+	fi; \
+	echo "You entered config file: config/$$config_file"; \
+	bash post_varloc_data_pipeline/slurm_vembrane_processing.sh "$$(realpath config/$$config_file)"
+
+## Preprocess TSV files to Zarr using slurm
+.PHONY: slurm_tsv_preprocess_to_zarr
+slurm_tsv_preprocess_to_zarr:
+	@read -p "Enter the name of the text file in the config folder (e.g., test_bcf_file.txt): " config_file; \
+	if [ ! -f "config/$$config_file" ]; then \
+		echo "File config/$$config_file does not exist!"; \
+		exit 1; \
+	fi; \
+	echo "You entered config file: config/$$config_file"; \
+	bash post_varloc_data_pipeline/slurm_tsv_preprocess_to_zarr.sh "$$(realpath config/$$config_file)"
 
 
 ## Make Dataset
@@ -85,44 +101,9 @@ data: requirements
 
 
 
-## Make symlink
-.PHONY: symlink
-symlink:
-	@read -p "Enter the varlociraptor main folder or a specific tsv file path:" folder; \
-	if [ -d "$$folder" ]; then \
-		echo "Processing TSV files in $$folder"; \
-	fi \
-	&& $(PYTHON_INTERPRETER) post_varloc_data_pipeline/dataset.py --source $$folder \
 
 
 
-## Make zarr folder
-.PHONY: nonslurm_zarr
-nonslurm_zarr:
-	@echo "Listing all files in data/raw folder:"; \
-	for file in data/raw/*; do \
-		echo $$file; \
-		wc -l $$file; \
-		readlink "$$file"; \
-		echo "finished with file"; \
-	done
-
-## $(PYTHON_INTERPRETER) post_varloc_data_pipeline/tsv_to_zarr.py
-
-## Make Dataset
-.PHONY: clean_synlinks
-clean_synlinks:
-	@echo "Listing all files in data/raw folder:"; \
-	for file in data/raw/*; do \
-		echo $$file; \
-		read -p "Do you want to delete this file? (y/n) " choice; \
-		if [ "$$choice" = "y" ]; then \
-			rm $$file; \
-			echo "$$file deleted"; \
-		else \
-			echo "$$file kept"; \
-		fi; \
-	done
 
 ## run tsv_to_zarr.py using slurm
 .PHONY: tsv_to_zarr
@@ -137,29 +118,9 @@ tsv_to_zarr:
 		fi; \
 	done
 
-## run tsv_to_zarr.py using slurm by creating a slurm script and running it.
-.PHONY: slurm_tsv_to_zarr
-slurm_tsv_to_zarr:
-	for file in data/raw/*; do \
-		echo "raw data file: " $$file; \
-		file_size_gb=$(du -BG $$file | cut -f1 | sed 's/G//'); \
-		echo "File size: $$file_size_gb GB"; \
-		file_size_gb=$$((file_size_gb * 10)); \
-		read -p "Do you want to create a zarr file from this file? (y/n) " choice; \
-		if [ "$$choice" = "y" ]; then \
-			$(PYTHON_INTERPRETER) post_varloc_data_pipeline/tsv_to_zarr.py --input $$file; \
-		else \
-			echo "$$file skipped"; \
-		fi; \
-	done
 
-#!/bin/bash
 
-# export PATH="/home/delpropo/miniconda3/etc/profile.d/conda.sh"
-#source /home/delpropo/.bashrc
-#export TMPDIR=/scratch/sooeunc_root/sooeunc0/delpropo
 
-#conda activate sgkit_env
 
 
 ## run tsv_to_zarr.py using slurm
@@ -169,7 +130,71 @@ config_test:
 
 
 
-## The goal is to create a symlink in the raw, make a zarr
+
+
+## Test vembrane on tests/data/test_ann_all/test.vcf by running vembrane table ALL and compare output to expected.tsv
+.PHONY: test_vembrane
+test_vembrane:
+	@echo "Running vembrane table ALL on tests/data/test_ann_all/test.vcf..."
+	@jobid=$$(sbatch --parsable --time=1:00:00 --cpus-per-task=1 --job-name=vembrane_table_test \
+		--output=tests/data/test_ann_all/vembrane_table_test.slurm.out \
+		--wrap="source ~/.bashrc && conda activate post-varloc-data-pipeline && vembrane table ALL tests/data/test_ann_all/test.vcf > tests/data/test_ann_all/output.tsv"); \
+	echo "Submitted job $$jobid, waiting for completion..."; \
+	while squeue -j $$jobid 2>/dev/null | grep -q $$jobid; do \
+		echo "Job $$jobid still running, waiting..."; \
+		sleep 10; \
+	done; \
+	echo "Job $$jobid completed, checking results..."; \
+	if [ -f "tests/data/test_ann_all/output.tsv" ]; then \
+		if diff tests/data/test_ann_all/output.tsv tests/data/test_ann_all/expected.tsv > /dev/null 2>&1; then \
+			echo 'Test passed!'; \
+		else \
+			echo 'Test failed! Files differ.'; \
+			exit 1; \
+		fi; \
+	else \
+		echo "Test failed! output.tsv was not created."; \
+		exit 1; \
+	fi
+
+
+## Test tsv_preprocess_to_zarr.py using expected.tsv
+.PHONY: test_tsv_preprocess
+test_tsv_preprocess:
+	@echo "Testing tsv_preprocess_to_zarr.py on tests/data/test_ann_all/expected.tsv..."
+	@mkdir -p tests/data/test_ann_all/zarr_output
+	@jobid=$$(sbatch --parsable --time=1:00:00 --cpus-per-task=1 --job-name=tsv_preprocess_test \
+		--output=tests/data/test_ann_all/tsv_preprocess_test.slurm.out \
+		--wrap="source ~/.bashrc && conda activate post-varloc-data-pipeline && python post_varloc_data_pipeline/tsv_preprocess_to_zarr.py --input tests/data/test_ann_all/expected.tsv --output tests/data/test_ann_all/zarr_output"); \
+	echo "Submitted job $$jobid, waiting for completion..."; \
+	while squeue -j $$jobid 2>/dev/null | grep -q $$jobid; do \
+		echo "Job $$jobid still running, waiting..."; \
+		sleep 10; \
+	done; \
+	echo "Job $$jobid completed, checking results..."; \
+	if [ -d "tests/data/test_ann_all/zarr_output/expected.zarr" ]; then \
+		echo "Test passed! Zarr file created successfully."; \
+	else \
+		echo "Test failed! Zarr file not created."; \
+		exit 1; \
+	fi
+
+
+## Run all tests and clean up afterwards
+.PHONY: test_tests
+test_tests: test_vembrane test_tsv_preprocess clean_tests
+	@echo "All tests completed and cleaned up successfully!"
+
+## clean tests.  remove output tests/data/test_ann_all/output.tsv and tests/data/test_ann_all/zarr_output
+.PHONY: clean_tests
+clean_tests:
+	@echo "Cleaning test output files..."
+	@rm -f tests/data/test_ann_all/output.tsv
+	@rm -f tests/data/test_ann_all/vembrane_table_test.slurm.out
+	@rm -f tests/data/test_ann_all/tsv_preprocess_test.slurm.out
+	@rm -rf tests/data/test_ann_all/zarr_output
+	@echo "Test output files cleaned."
+
 
 #################################################################################
 # Self Documenting Commands                                                     #

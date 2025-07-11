@@ -22,12 +22,12 @@ if [ ! -f "$bcf_files_list" ]; then
 fi
 
 # Filter the list to keep only lines ending with .bcf or .vcf
-filtered_files=$(grep -E '\.(bcf|vcf)$' "$bcf_files_list")
+filtered_files=$(grep -E '\.(tsv)$' "$bcf_files_list")
 
-# Check if any files do not end with .bcf or .vcf
-invalid_files=$(grep -Ev '\.(bcf|vcf)$' "$bcf_files_list" | grep -v '^\s*$')
+# Check if any files do not end with .tsv
+invalid_files=$(grep -Ev '\.(tsv)$' "$bcf_files_list" | grep -v '^\s*$')
 if [ -n "$invalid_files" ]; then
-    echo "Error: The following files do not end with .bcf or .vcf:"
+    echo "Error: The following files do not end with .tsv:"
     echo "$invalid_files"
     exit 1
 fi
@@ -62,16 +62,21 @@ if [ -z "$slurm_account" ]; then
     exit 1
 fi
 
-# Iterate through each file and run vembrane
+# Iterate through each file and run tsv_preprocess_to_zarr.py.
 while IFS= read -r file; do
     dir=$(dirname "$file")
-    mkdir -p "$dir/post-varloc-data-pipeline"
-    mkdir -p "$dir/post-varloc-data-pipeline/tsv"
+    mkdir -p "$dir/zarr"
+    filesize_bytes=$(stat -c%s "$file")
+    filesize_gb=$(awk "BEGIN {printf \"%.2f\", $filesize_bytes/1024/1024/1024}")
+    echo "Processing $file (size: $filesize_gb GB)"
+    if (( $(echo "$filesize_gb > 5" | bc -l) )); then
+        echo "Warning: $file is larger than 5GB. The sbatch job may fail due to insufficient memory."
+    fi
     # Skip blank lines
     [ -z "$file" ] && continue
-    out_tsv="$dir/post-varloc-data-pipeline/tsv/$(basename "$file").tsv"
-    sbatch --account="$slurm_account" --time=24:00:00 --cpus-per-task=1 --mem=7G --job-name=vembrane_table \
-        --output="$out_tsv.slurm.out" --wrap="source /home/\$USER/.bashrc && conda activate post-varloc-data-pipeline && vembrane table ALL '$file' > '$out_tsv' 2> /dev/null"
+    sbatch --account="$slurm_account" --time=02:00:00 --cpus-per-task=1 --mem=14G --job-name=tsv_preprocess_to_zarr \
+        --output="$dir/zarr/$(basename "$file").zarr.slurm.out" \
+        --wrap="source /home/\$USER/.bashrc && conda activate post-varloc-data-pipeline && python post_varloc_data_pipeline/tsv_preprocess_to_zarr.py --input '$file' --output '$dir/zarr'"
 done <<< "$filtered_files"
 
 

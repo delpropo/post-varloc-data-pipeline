@@ -2,6 +2,9 @@
 /data/**
 /local/**
 
+# Test run
+/tests/data/tests/test_ann_all/*
+
 # Config
 /config/**
 

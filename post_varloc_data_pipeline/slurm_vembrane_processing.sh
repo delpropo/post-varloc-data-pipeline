@@ -62,6 +62,10 @@ if [ -z "$slurm_account" ]; then
     exit 1
 fi
 
+# create an output file in the config directory which will contain the list of files that were processed.  Include the date and time of processing and include vembrane_processing in the file name
+output_file="processed_files_$(date +%Y%m%d_%H%M%S)_vembrane_processing.txt"
+
+
 # Iterate through each file and run vembrane
 while IFS= read -r file; do
     dir=$(dirname "$file")
@@ -72,8 +76,9 @@ while IFS= read -r file; do
     out_tsv="$dir/post-varloc-data-pipeline/tsv/$(basename "$file").tsv"
     sbatch --account="$slurm_account" --time=24:00:00 --cpus-per-task=1 --mem=7G --job-name=vembrane_table \
         --output="$out_tsv.slurm.out" --wrap="source /home/\$USER/.bashrc && conda activate post-varloc-data-pipeline && vembrane table ALL '$file' > '$out_tsv' 2> /dev/null"
+    # Add the complete path of the processed file to the output_file
+    echo "$out_tsv" >> "$output_file"
 done <<< "$filtered_files"
-
 
 
 
