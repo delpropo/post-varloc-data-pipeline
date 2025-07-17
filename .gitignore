@@ -1,12 +1,29 @@
-# Data
+# Data directories - exclude all data files and subdirectories
+/data/
 /data/**
+/local/
 /local/**
+**/data/
+**/data/**
 
-# Test run
-/tests/data/tests/test_ann_all/*
+# Test run data - exclude test output data
+/tests/data/test_ann_all/**
+/tests/data/tests/test_ann_all/**
 
-# Config
+# Config files - exclude all configuration files
+/config/
 /config/**
+**/config/
+**/config/**
+
+# Log files - exclude all log files and directories
+/logs/
+/logs/**
+**/logs/
+**/logs/**
+*.log
+*.out
+*.slurm.out
 
 # Mac OS-specific storage files
 .DS_Store

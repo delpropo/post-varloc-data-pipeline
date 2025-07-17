@@ -1,0 +1,6 @@
+column_name,dtype
+ANN['Annotation'],string
+ANN['cDNA.pos / cDNA.length'],string
+ANN['CDS.pos / CDS.length'],string
+ANN['AA.pos / AA.length'],string
+ANN['ERRORS / WARNINGS / INFO'],string

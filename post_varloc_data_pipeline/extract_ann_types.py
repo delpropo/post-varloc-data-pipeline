@@ -65,13 +65,13 @@ def map_vep_types_to_pandas(type_info: str) -> str:
     """
     type_info = type_info.lower()
 
-    # Direct mappings
+    # Direct mappings - use standard numpy dtypes for zarr compatibility
     if 'int' in type_info:
-        return 'int64'
+        return 'int64'  # Use standard int64, not nullable Int64
     elif 'float' in type_info:
         return 'float64'
     elif 'bool' in type_info:
-        return 'boolean'
+        return 'bool'  # Use standard bool, not nullable boolean
     elif 'list[str]' in type_info or 'list[term]' in type_info:
         return 'string'  # Will be stored as string representation
     elif 'dict[str, float]' in type_info or 'dict[str, any]' in type_info:
@@ -101,6 +101,11 @@ def create_dtype_config(ann_types: List[Tuple[str, str]], output_file: str, pref
         for column_name, type_info in ann_types:
             full_column_name = f"{prefix}{column_name}{suffix}"
             pandas_dtype = map_vep_types_to_pandas(type_info)
+
+            # Override specific columns that contain dictionary data as strings
+            if column_name in ['SIFT', 'PolyPhen']:
+                pandas_dtype = 'string'
+
             writer.writerow([full_column_name, pandas_dtype])
 
 

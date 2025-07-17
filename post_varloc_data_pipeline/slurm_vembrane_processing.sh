@@ -63,7 +63,11 @@ if [ -z "$slurm_account" ]; then
 fi
 
 # create an output file in the config directory which will contain the list of files that were processed.  Include the date and time of processing and include vembrane_processing in the file name
-output_file="processed_files_$(date +%Y%m%d_%H%M%S)_vembrane_processing.txt"
+output_file="processed_files_$(date +%Y%m%d_%H%M%S)_vembrane_zarr_processing.txt"
+
+echo "Starting vembrane processing with automatic Zarr conversion..."
+echo "Processing $(echo "$filtered_files" | wc -l) files"
+echo "Output tracking file: $output_file"
 
 
 # Iterate through each file and run vembrane
@@ -71,13 +75,22 @@ while IFS= read -r file; do
     dir=$(dirname "$file")
     mkdir -p "$dir/post-varloc-data-pipeline"
     mkdir -p "$dir/post-varloc-data-pipeline/tsv"
+    mkdir -p "$dir/post-varloc-data-pipeline/zarr"
     # Skip blank lines
     [ -z "$file" ] && continue
     out_tsv="$dir/post-varloc-data-pipeline/tsv/$(basename "$file").tsv"
+    out_zarr="$dir/post-varloc-data-pipeline/zarr/$(basename "$file").zarr"
+
+    # Submit vembrane job with automatic TSV to Zarr conversion with data types
     sbatch --account="$slurm_account" --time=24:00:00 --cpus-per-task=1 --mem=7G --job-name=vembrane_table \
-        --output="$out_tsv.slurm.out" --wrap="source /home/\$USER/.bashrc && conda activate post-varloc-data-pipeline && vembrane table ALL '$file' > '$out_tsv' 2> /dev/null"
-    # Add the complete path of the processed file to the output_file
+        --output="$out_tsv.slurm.out" --wrap="source /home/\$USER/.bashrc && conda activate post-varloc-data-pipeline && \
+        vembrane table ALL '$file' > '$out_tsv' 2> /dev/null && \
+        python post_varloc_data_pipeline/tsv_preprocess_to_zarr.py --input '$out_tsv' --output '$dir/post-varloc-data-pipeline/zarr' && \
+        echo 'TSV and Zarr processing complete for $(basename "$file")'"
+
+    # Add both TSV and Zarr paths to the output file
     echo "$out_tsv" >> "$output_file"
+    echo "$out_zarr" >> "$output_file"
 done <<< "$filtered_files"
 
 

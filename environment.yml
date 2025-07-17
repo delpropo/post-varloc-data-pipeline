@@ -17,14 +17,14 @@ dependencies:
   - xarray
   - openpyxl
   - zarr
+  - dask
   - vembrane=2.1.0
 
   # removed forever
   #  - jupyterlab
-#  - matplotlib
-#  - notebook
-  # - zarr
-  # - dask
+  #  - matplotlib
+  #  - notebook
+
 
   - pip:
     - python-dotenv
