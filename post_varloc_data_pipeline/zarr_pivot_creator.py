@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 """
 Create filtered and pivoted Zarr files based on configuration criteria defined in config.ini.
-Supports column filtering, data filtering, and pivot operations for genomic variant analysis.
+Supports column filtering, data filtering, gene filtering, and pivot operations for genomic variant analysis.
 
 WORKFLOW:
-1. Filter data based on configuration criteria (config.ini)
-2. Apply pivot operations to convert long format to wide format
-3. Aggregate columns with identical/different values appropriately
-4. Add filename metadata and save processed zarr file
+1. Apply gene filtering (if specified) to keep only variants with genes in the filter list
+2. Filter data based on configuration criteria (config.ini)
+3. Apply pivot operations to convert long format to wide format
+4. Aggregate columns with identical/different values appropriately
+5. Add filename metadata and save processed zarr file
+
+GENE FILTERING:
+- Accepts TSV file with 'Gene Symbol' column
+- Filters variants where any gene in ANN['SYMBOL'] matches any gene in the filter list
+- ANN['SYMBOL'] can contain multiple genes separated by semicolons, commas, pipes, or ampersands
+- Applied before other filtering steps to maximize performance
 """
 
 import argparse
@@ -36,11 +43,71 @@ class ZarrFilterPivotCreator:
         # Additional essential columns to include if they exist (removed ANN['MAX_AF'] to preserve null values)
         self.additional_essential = []
         self.load_config(config_file)
+        # Gene filtering
+        self.gene_filter_symbols = None
 
     def load_config(self, config_file: str) -> None:
         """Load configuration from INI file."""
         self.config = configparser.ConfigParser()
         self.config.read(config_file)
+
+    def load_gene_filter(self, gene_filter_file: str) -> None:
+        """Load gene symbols from TSV file for filtering."""
+        try:
+            # Read the gene filter file
+            gene_df = pd.read_csv(gene_filter_file, sep='\t')
+
+            # Check if Gene Symbol column exists
+            if 'Gene Symbol' not in gene_df.columns:
+                raise ValueError(f"Gene filter file must contain a 'Gene Symbol' column. Found columns: {list(gene_df.columns)}")
+
+            # Extract unique gene symbols and remove any null values
+            self.gene_filter_symbols = set(gene_df['Gene Symbol'].dropna().unique())
+
+            print(f"✓ Loaded {len(self.gene_filter_symbols)} gene symbols for filtering")
+            print(f"  Example genes: {list(self.gene_filter_symbols)[:5]}")
+
+        except Exception as e:
+            print(f"Error loading gene filter file '{gene_filter_file}': {e}")
+            raise
+
+    def apply_gene_filter(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Apply gene filtering if gene filter is loaded."""
+        if self.gene_filter_symbols is None:
+            return df
+
+        if "ANN['SYMBOL']" not in df.columns:
+            print("Warning: ANN['SYMBOL'] column not found in data. Skipping gene filtering.")
+            return df
+
+        original_rows = len(df)
+
+        # Create a mask for rows where any gene symbol in ANN['SYMBOL'] matches our filter
+        def check_gene_match(symbols_str):
+            if pd.isna(symbols_str) or symbols_str == '' or symbols_str == '.':
+                return False
+
+            # ANN['SYMBOL'] can contain multiple symbols separated by various delimiters
+            # Common delimiters: semicolon, comma, pipe, ampersand
+            symbols = str(symbols_str).replace(';', '|').replace(',', '|').replace('&', '|').split('|')
+            symbols = [s.strip() for s in symbols if s.strip()]
+
+            # Check if any symbol matches our filter
+            return any(symbol in self.gene_filter_symbols for symbol in symbols)
+
+        # Apply the filter
+        mask = df["ANN['SYMBOL']"].apply(check_gene_match)
+        filtered_df = df[mask].copy()
+
+        filtered_rows = len(filtered_df)
+        removed_rows = original_rows - filtered_rows
+
+        print("🧬 GENE FILTERING APPLIED:")
+        print(f"   ORIGINAL: {original_rows:,} rows")
+        print(f"   FILTERED: {filtered_rows:,} rows")
+        print(f"   REMOVED:  {removed_rows:,} rows ({(removed_rows/original_rows)*100:.1f}%)")
+
+        return filtered_df
 
     def get_columns_to_drop(self) -> List[str]:
         """Get list of columns to drop based on configuration."""
@@ -170,6 +237,9 @@ class ZarrFilterPivotCreator:
 
         original_rows = len(df)
         print(f"BEFORE: Original data shape: {df.shape} ({original_rows:,} rows)")
+
+        # STEP 0: Apply gene filtering if specified
+        df = self.apply_gene_filter(df)
 
         # STEP 1: Apply filters
         filters = self.get_filters()
@@ -470,6 +540,7 @@ def main():
     parser.add_argument('--zarr', '-z', required=True, help='Input Zarr file path')
     parser.add_argument('--config', '-c', default='config.ini', help='Configuration file (default: config.ini)')
     parser.add_argument('--output', '-o', help='Output Zarr file path')
+    parser.add_argument('--gene-filter', '-g', help='TSV file with Gene Symbol column for filtering variants')
     parser.add_argument('--export-tsv', action='store_true', help='Also export processed data as TSV file')
     parser.add_argument('--tsv-output', help='TSV output file path (default: same as zarr output with .tsv extension)')
     parser.add_argument('--list-filters', action='store_true', help='List configured filters')
@@ -483,6 +554,13 @@ def main():
         return
 
     creator = ZarrFilterPivotCreator(args.config)
+
+    # Load gene filter if specified
+    if args.gene_filter:
+        if not Path(args.gene_filter).exists():
+            print(f"Error: Gene filter file {args.gene_filter} not found")
+            return
+        creator.load_gene_filter(args.gene_filter)
 
     # List filters if requested
     if args.list_filters:

@@ -22,7 +22,7 @@ import argparse
 import sys
 import warnings
 from pathlib import Path
-from typing import List
+from typing import List, Set
 import pandas as pd
 import xarray as xr
 from dask.distributed import Client
@@ -39,13 +39,14 @@ class ZarrCrossFileAggregator:
     Assumes individual files have already been processed by zarr_pivot_creator.py
     """
 
-    def __init__(self, n_workers=None, chunk_size="1GB"):
+    def __init__(self, n_workers=None, chunk_size="1GB", gene_filter_file: str = None):
         """
         Initialize the aggregator with Dask configuration.
 
         Args:
             n_workers: Number of Dask workers (None = auto-detect all cores)
             chunk_size: Memory size per chunk for processing
+            gene_filter_file: Optional path to gene filter TSV file
         """
         self.chunk_size = chunk_size
         self.client = None
@@ -54,6 +55,46 @@ class ZarrCrossFileAggregator:
         # Specific columns to include in aggregation
         self.target_ann_columns = ["ANN['MAX_AF']", "ANN['VARIANT_CLASS']", "ANN['Feature_type']", "ANN['IMPACT']", "ANN['SYMBOL']"]
         self.setup_dask_client(n_workers)
+        self.gene_filter_symbols = None
+        if gene_filter_file:
+            self.load_gene_filter(gene_filter_file)
+
+    def load_gene_filter(self, gene_filter_file: str) -> None:
+        """Load gene symbols from TSV file for filtering."""
+        try:
+            gene_df = pd.read_csv(gene_filter_file, sep='\t')
+            if 'Gene Symbol' not in gene_df.columns:
+                raise ValueError(f"Gene filter file must contain a 'Gene Symbol' column. Found columns: {list(gene_df.columns)}")
+            self.gene_filter_symbols = set(gene_df['Gene Symbol'].dropna().unique())
+            print(f"✓ Loaded {len(self.gene_filter_symbols)} gene symbols for filtering")
+            print(f"  Example genes: {list(self.gene_filter_symbols)[:5]}")
+        except Exception as e:
+            print(f"Error loading gene filter file '{gene_filter_file}': {e}")
+            raise
+
+    def apply_gene_filter(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Apply gene filtering if gene filter is loaded."""
+        if self.gene_filter_symbols is None:
+            return df
+        if "ANN['SYMBOL']" not in df.columns:
+            print("Warning: ANN['SYMBOL'] column not found in data. Skipping gene filtering.")
+            return df
+        original_rows = len(df)
+        def check_gene_match(symbols_str):
+            if pd.isna(symbols_str) or symbols_str == '' or symbols_str == '.':
+                return False
+            symbols = str(symbols_str).replace(';', '|').replace(',', '|').replace('&', '|').split('|')
+            symbols = [s.strip() for s in symbols if s.strip()]
+            return any(symbol in self.gene_filter_symbols for symbol in symbols)
+        mask = df["ANN['SYMBOL']"].apply(check_gene_match)
+        filtered_df = df[mask].copy()
+        filtered_rows = len(filtered_df)
+        removed_rows = original_rows - filtered_rows
+        print("🧬 GENE FILTERING APPLIED:")
+        print(f"   ORIGINAL: {original_rows:,} rows")
+        print(f"   FILTERED: {filtered_rows:,} rows")
+        print(f"   REMOVED:  {removed_rows:,} rows ({(removed_rows/original_rows)*100 if original_rows else 0:.1f}%)")
+        return filtered_df
 
     def setup_dask_client(self, n_workers=None):
         """Setup Dask client for parallel processing."""
@@ -143,7 +184,7 @@ class ZarrCrossFileAggregator:
 
         return valid_files
 
-    def combine_processed_zarr_files(self, processed_files: List[str], output_path: str, export_tsv: bool = False):
+    def combine_processed_zarr_files(self, processed_files: List[str], output_path: str, export_tsv: bool = False, keep_all_columns: bool = False):
         """
         Step 2: Combine processed zarr files with cross-file pivot.
 
@@ -163,6 +204,14 @@ class ZarrCrossFileAggregator:
                 ds = xr.open_zarr(zarr_file)
                 df = ds.to_dataframe().reset_index()
                 ds.close()
+
+                # Apply gene filter if specified
+                if self.gene_filter_symbols is not None:
+                    before_rows = len(df)
+                    df = self.apply_gene_filter(df)
+                    after_rows = len(df)
+                    filtered_out = before_rows - after_rows
+                    print(f"File {file_idx} ({zarr_file}): Filtered out {filtered_out:,} rows by gene filter ({before_rows:,} -> {after_rows:,})")
 
                 # Check if family column exists and validate uniqueness
                 if 'family' in df.columns:
@@ -207,51 +256,53 @@ class ZarrCrossFileAggregator:
             print(f"Combined dataframe shape: {combined_df.shape}")
             print(f"Family mapping: {file_families}")
 
-            # Create properly structured family AF columns
-            combined_df = self.create_family_af_columns(combined_df, file_families)
-
-            # Select columns to include in final output
             available_columns = combined_df.columns.tolist()
+            if keep_all_columns:
+                print("Keeping all columns from input files in the output.")
+                filtered_df = combined_df.copy()
+                agg_columns = [col for col in available_columns if col not in self.pivot_columns]
+                print(f"  Pivot columns: {self.pivot_columns}")
+                print(f"  Aggregation columns: {agg_columns}")
+            else:
+                # 1. Always include pivot columns
+                columns_to_keep = [col for col in self.pivot_columns if col in available_columns]
 
-            # 1. Always include pivot columns
-            columns_to_keep = [col for col in self.pivot_columns if col in available_columns]
+                # 2. Include target ANN columns if they exist
+                for ann_col in self.target_ann_columns:
+                    if ann_col in available_columns:
+                        columns_to_keep.append(ann_col)
+                        print(f"  Including ANN column: {ann_col}")
+                    else:
+                        print(f"  ANN column not found: {ann_col}")
 
-            # 2. Include target ANN columns if they exist
-            for ann_col in self.target_ann_columns:
-                if ann_col in available_columns:
-                    columns_to_keep.append(ann_col)
-                    print(f"  Including ANN column: {ann_col}")
-                else:
-                    print(f"  ANN column not found: {ann_col}")
+                # 3. Include all INFO columns
+                info_columns = [col for col in available_columns if col.startswith("INFO[")]
+                columns_to_keep.extend(info_columns)
+                print(f"  Including {len(info_columns)} INFO columns")
 
-            # 3. Include all INFO columns
-            info_columns = [col for col in available_columns if col.startswith("INFO[")]
-            columns_to_keep.extend(info_columns)
-            print(f"  Including {len(info_columns)} INFO columns")
+                # 4. Find family-specific AF columns
+                family_af_columns = [col for col in available_columns if col.endswith('_AF')]
+                columns_to_keep.extend(family_af_columns)
+                if family_af_columns:
+                    print(f"  Including family-specific AF columns: {family_af_columns}")
 
-            # 4. Find family-specific AF columns
-            family_af_columns = [col for col in available_columns if col.endswith('_AF')]
-            columns_to_keep.extend(family_af_columns)
-            if family_af_columns:
-                print(f"  Including family-specific AF columns: {family_af_columns}")
+                # 5. Include family and sample columns if they exist
+                for meta_col in ['family', 'SAMPLE']:
+                    if meta_col in available_columns:
+                        columns_to_keep.append(meta_col)
 
-            # 5. Include family and sample columns if they exist
-            for meta_col in ['family', 'SAMPLE']:
-                if meta_col in available_columns:
-                    columns_to_keep.append(meta_col)
+                # Remove duplicates while preserving order
+                columns_to_keep = list(dict.fromkeys(columns_to_keep))
 
-            # Remove duplicates while preserving order
-            columns_to_keep = list(dict.fromkeys(columns_to_keep))
+                # Filter dataframe to only keep selected columns
+                filtered_df = combined_df[columns_to_keep].copy()
+                print(f"Filtered to {len(columns_to_keep)} columns: {columns_to_keep}")
 
-            # Filter dataframe to only keep selected columns
-            filtered_df = combined_df[columns_to_keep].copy()
-            print(f"Filtered to {len(columns_to_keep)} columns: {columns_to_keep}")
+                # Determine aggregation columns (everything except pivot columns)
+                agg_columns = [col for col in columns_to_keep if col not in self.pivot_columns]
 
-            # Determine aggregation columns (everything except pivot columns)
-            agg_columns = [col for col in columns_to_keep if col not in self.pivot_columns]
-
-            print(f"  Pivot columns: {self.pivot_columns}")
-            print(f"  Aggregation columns: {agg_columns}")
+                print(f"  Pivot columns: {self.pivot_columns}")
+                print(f"  Aggregation columns: {agg_columns}")
 
             # Group by pivot columns
             grouped = filtered_df.groupby(self.pivot_columns)
@@ -441,7 +492,7 @@ class ZarrCrossFileAggregator:
 
         # Perform cross-file aggregation
         print("\n=== CROSS-FILE AGGREGATION ===")
-        self.combine_processed_zarr_files(valid_files, output_path, export_tsv=export_tsv)
+        self.combine_processed_zarr_files(valid_files, output_path, export_tsv=export_tsv, keep_all_columns=getattr(self, 'keep_all_columns', False))
 
         # Print summary
         print("\n=== PROCESSING SUMMARY ===")
@@ -556,6 +607,12 @@ Note: Input files should already be processed with zarr_pivot_creator.py
     # Output format options
     parser.add_argument('--export-tsv', action='store_true', help='Also export results as TSV file (in addition to Zarr)')
 
+    # Gene filter option
+    parser.add_argument('--gene-filter', '-g', help="TSV file with Gene Symbol column for filtering variants (applied before aggregation)")
+
+    # Keep all columns option
+    parser.add_argument('--keep-all-columns', action='store_true', help='Keep all columns from input files in the output (no column selection)')
+
     return parser.parse_args()
 
 
@@ -573,8 +630,10 @@ def main():
     # Initialize aggregator
     aggregator = ZarrCrossFileAggregator(
         n_workers=args.workers,
-        chunk_size=args.chunk_size
+        chunk_size=args.chunk_size,
+        gene_filter_file=args.gene_filter
     )
+    aggregator.keep_all_columns = args.keep_all_columns
 
     try:
         # Get list of processed Zarr files
