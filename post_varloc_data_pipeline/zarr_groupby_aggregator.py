@@ -184,7 +184,7 @@ class ZarrCrossFileAggregator:
 
         return valid_files
 
-    def combine_processed_zarr_files(self, processed_files: List[str], output_path: str, export_tsv: bool = False, keep_all_columns: bool = False):
+    def combine_processed_zarr_files(self, processed_files: List[str], output_path: str, export_tsv: bool = False, keep_all_columns: bool = False, row_count_only: bool = False, row_count_cutoff: int = None):
         """
         Step 2: Combine processed zarr files with cross-file pivot.
 
@@ -192,7 +192,19 @@ class ZarrCrossFileAggregator:
             processed_files: List of processed zarr file paths
             output_path: Final output file path
             export_tsv: Whether to also export as TSV
+            keep_all_columns: Whether to keep all columns
+            row_count_only: Whether to perform minimal pivot with only ROW_COUNT
+            row_count_cutoff: Filter out variants with ROW_COUNT >= this value
         """
+
+        # Validate row_count_cutoff parameter
+        if row_count_cutoff is not None:
+            if row_count_cutoff < 2:
+                raise ValueError("row_count_cutoff must be at least 2")
+            if row_count_cutoff > len(processed_files):
+                raise ValueError(f"row_count_cutoff ({row_count_cutoff}) cannot be larger than the number of files being processed ({len(processed_files)})")
+            print(f"Row count cutoff enabled: Will exclude variants with ROW_COUNT >= {row_count_cutoff}")
+
         print(f"Step 2: Combining {len(processed_files)} processed files...")
 
         try:
@@ -204,6 +216,48 @@ class ZarrCrossFileAggregator:
                 ds = xr.open_zarr(zarr_file)
                 df = ds.to_dataframe().reset_index()
                 ds.close()
+
+                print(f"Processing file {file_idx}/{len(processed_files)}: {zarr_file}")
+
+                # VALIDATION: Check that each file has unique genomic coordinates
+                print("  Validating genomic coordinate uniqueness...")
+                genomic_coords = ['CHROM', 'POS', 'REF', 'ALT']
+                available_genomic_coords = [col for col in genomic_coords if col in df.columns]
+
+                if len(available_genomic_coords) < 4:
+                    print(f"  Warning: Missing genomic coordinate columns in {zarr_file}")
+                    print(f"  Available: {available_genomic_coords}, Expected: {genomic_coords}")
+                else:
+                    # Group by genomic coordinates and count rows per group
+                    validation_groups = df.groupby(available_genomic_coords).size()
+                    duplicate_groups = validation_groups[validation_groups > 1]
+
+                    if len(duplicate_groups) > 0:
+                        print(f"  ❌ VALIDATION FAILED for file {zarr_file}")
+                        print(f"  Found {len(duplicate_groups)} genomic coordinate combinations with multiple rows!")
+                        print("  Duplicate combinations:")
+
+                        for i, (coords, count) in enumerate(duplicate_groups.head(10).items()):
+                            if isinstance(coords, tuple):
+                                coord_dict = dict(zip(available_genomic_coords, coords))
+                                coord_str = ", ".join(f"{col}={val}" for col, val in coord_dict.items())
+                            else:
+                                coord_str = f"{available_genomic_coords[0]}={coords}"
+                            print(f"    {coord_str} -> {count} rows")
+
+                        if len(duplicate_groups) > 10:
+                            print(f"    ... and {len(duplicate_groups) - 10} more duplicate combinations")
+
+                        # Create detailed error message
+                        error_msg = (f"File validation failed for {zarr_file}: "
+                                   f"{len(duplicate_groups)} genomic coordinate combinations have multiple rows. "
+                                   f"Each genomic coordinate (CHROM, POS, REF, ALT) should appear exactly once per file. "
+                                   f"This indicates the file was not properly processed by zarr_pivot_creator.py")
+
+                        raise ValueError(error_msg)
+                    else:
+                        total_variants = len(validation_groups)
+                        print(f"  ✅ Validation passed: All {total_variants:,} genomic coordinate combinations are unique")
 
                 # Apply gene filter if specified
                 if self.gene_filter_symbols is not None:
@@ -257,7 +311,15 @@ class ZarrCrossFileAggregator:
             print(f"Family mapping: {file_families}")
 
             available_columns = combined_df.columns.tolist()
-            if keep_all_columns:
+            if row_count_only:
+                print("Performing minimal pivot with only ROW_COUNT.")
+                # Only keep pivot columns for minimal output
+                columns_to_keep = [col for col in self.pivot_columns if col in available_columns]
+                filtered_df = combined_df[columns_to_keep].copy()
+                agg_columns = []  # No aggregation columns, just count rows
+                print(f"  Pivot columns: {self.pivot_columns}")
+                print("  No data columns will be aggregated - only ROW_COUNT will be included")
+            elif keep_all_columns:
                 print("Keeping all columns from input files in the output.")
                 filtered_df = combined_df.copy()
                 agg_columns = [col for col in available_columns if col not in self.pivot_columns]
@@ -308,20 +370,35 @@ class ZarrCrossFileAggregator:
             grouped = filtered_df.groupby(self.pivot_columns)
 
             # Prepare aggregation dictionary
-            agg_dict = {}
-            for col in agg_columns:
-                if col.endswith('_AF'):
-                    # For family-specific AF columns, use family-specific aggregation
-                    agg_dict[col] = self.aggregate_family_af_values
-                else:
-                    # For other columns, use standard aggregation
-                    agg_dict[col] = self.aggregate_cross_file_values
+            if agg_columns:
+                agg_dict = {}
+                for col in agg_columns:
+                    if col.endswith('_AF'):
+                        # For family-specific AF columns, use family-specific aggregation
+                        agg_dict[col] = self.aggregate_family_af_values
+                    else:
+                        # For other columns, use standard aggregation
+                        agg_dict[col] = self.aggregate_cross_file_values
 
-            # Perform aggregation
-            result_df = grouped.agg(agg_dict).reset_index()
+                # Perform aggregation
+                result_df = grouped.agg(agg_dict).reset_index()
+            else:
+                # No aggregation columns, just get unique combinations of pivot columns
+                result_df = filtered_df.drop_duplicates(subset=self.pivot_columns).reset_index(drop=True)
+                result_df = result_df[self.pivot_columns].copy()
 
             # Add row count showing number of rows combined per variant
             result_df['ROW_COUNT'] = grouped.size().values
+
+            # Apply row count cutoff filtering if specified
+            if row_count_cutoff is not None:
+                original_count = len(result_df)
+                result_df = result_df[result_df['ROW_COUNT'] < row_count_cutoff].copy()
+                filtered_count = len(result_df)
+                removed_count = original_count - filtered_count
+                print(f"Row count cutoff applied: Removed {removed_count:,} variants with ROW_COUNT >= {row_count_cutoff}")
+                print(f"  Before cutoff: {original_count:,} variants")
+                print(f"  After cutoff: {filtered_count:,} variants ({(filtered_count/original_count)*100:.1f}% retained)")
 
             print(f"Final result shape: {result_df.shape}")
 
@@ -470,7 +547,7 @@ class ZarrCrossFileAggregator:
                 return unique_values[0]
             else:
                 return unique_values
-    def process_zarr_files(self, processed_zarr_files: List[str], output_path: str, export_tsv: bool = False):
+    def process_zarr_files(self, processed_zarr_files: List[str], output_path: str, export_tsv: bool = False, row_count_only: bool = False, row_count_cutoff: int = None):
         """
         Main processing function for cross-file aggregation.
         Expects input files to already be processed by zarr_pivot_creator.py
@@ -479,6 +556,8 @@ class ZarrCrossFileAggregator:
             processed_zarr_files: List of processed Zarr file paths
             output_path: Final output file path
             export_tsv: Whether to also export as TSV
+            row_count_only: Whether to perform minimal pivot with only ROW_COUNT
+            row_count_cutoff: Filter out variants with ROW_COUNT >= this value
         """
         print(f"Starting cross-file aggregation of {len(processed_zarr_files)} processed Zarr files...")
         print("Note: Individual files should already be processed with zarr_pivot_creator.py")
@@ -492,7 +571,7 @@ class ZarrCrossFileAggregator:
 
         # Perform cross-file aggregation
         print("\n=== CROSS-FILE AGGREGATION ===")
-        self.combine_processed_zarr_files(valid_files, output_path, export_tsv=export_tsv, keep_all_columns=getattr(self, 'keep_all_columns', False))
+        self.combine_processed_zarr_files(valid_files, output_path, export_tsv=export_tsv, keep_all_columns=getattr(self, 'keep_all_columns', False), row_count_only=row_count_only, row_count_cutoff=row_count_cutoff)
 
         # Print summary
         print("\n=== PROCESSING SUMMARY ===")
@@ -581,12 +660,24 @@ Examples:
   # Specify workers for SLURM
   python zarr_groupby_aggregator.py --zarr *.zarr --output results.zarr --workers 8
 
+  # Minimal pivot with row count cutoff
+  python zarr_groupby_aggregator.py --zarr *.zarr --output counts.zarr --row-count-only
+
+  # Filter out common variants (ROW_COUNT >= 5) for faster processing
+  python zarr_groupby_aggregator.py --zarr *.zarr --output rare_variants.zarr --row-count-cutoff 5
+
 Output columns:
   - Pivot: CHROM, POS, REF, ALT
   - ANN: MAX_AF, VARIANT_CLASS, Feature_type, IMPACT, SYMBOL
   - All INFO columns
   - Family-specific AF: 1_AF, 2_AF, 3_AF, etc.
   - ROW_COUNT (number of rows combined)
+
+With --row-count-only:
+  - Only: CHROM, POS, REF, ALT, ROW_COUNT
+
+With --row-count-cutoff N:
+  - Excludes variants where ROW_COUNT >= N before final processing
 
 Note: Input files should already be processed with zarr_pivot_creator.py
         """
@@ -612,6 +703,10 @@ Note: Input files should already be processed with zarr_pivot_creator.py
 
     # Keep all columns option
     parser.add_argument('--keep-all-columns', action='store_true', help='Keep all columns from input files in the output (no column selection)')
+
+    # Row count options
+    parser.add_argument('--row-count-only', action='store_true', help='Perform minimal pivot with only ROW_COUNT (no data columns)')
+    parser.add_argument('--row-count-cutoff', type=int, help='Filter out variants with ROW_COUNT >= this value before final pivot. Min value: 2, Max value: number of input files. Reduces processing time by excluding common variants.')
 
     return parser.parse_args()
 
@@ -646,8 +741,17 @@ def main():
             print("Error: No processed Zarr files specified!")
             sys.exit(1)
 
+        # Validate row_count_cutoff parameter early
+        if args.row_count_cutoff is not None:
+            if args.row_count_cutoff < 2:
+                print("Error: --row-count-cutoff must be at least 2")
+                sys.exit(1)
+            if args.row_count_cutoff > len(zarr_files):
+                print(f"Error: --row-count-cutoff ({args.row_count_cutoff}) cannot be larger than the number of files being processed ({len(zarr_files)})")
+                sys.exit(1)
+
         # Process files with cross-file aggregation
-        aggregator.process_zarr_files(zarr_files, args.output, export_tsv=args.export_tsv)
+        aggregator.process_zarr_files(zarr_files, args.output, export_tsv=args.export_tsv, row_count_only=args.row_count_only, row_count_cutoff=args.row_count_cutoff)
 
     except KeyboardInterrupt:
         print("\nProcessing interrupted by user")

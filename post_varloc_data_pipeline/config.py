@@ -4,6 +4,9 @@ from dotenv import load_dotenv, find_dotenv
 from loguru import logger
 import os
 
+import configparser
+import yaml
+
 # Load environment variables from .env file if it exists
 load_dotenv(find_dotenv())
 
@@ -17,7 +20,75 @@ INTERIM_DATA_DIR = DATA_DIR / "interim"
 PROCESSED_DATA_DIR = DATA_DIR / "processed"
 EXTERNAL_DATA_DIR = DATA_DIR / "external"
 
+
 MODELS_DIR = PROJ_ROOT / "models"
+
+
+
+def parse_ini(ini_path=None):
+    """
+    Parse the config.ini file and return a ConfigParser object.
+    If ini_path is None, defaults to PROJ_ROOT/config.ini.
+    """
+    if ini_path is None:
+        ini_path = PROJ_ROOT / "config.ini"
+    config = configparser.ConfigParser()
+    config.read(str(ini_path))
+    return config
+
+def parse_yaml(yaml_path=None):
+    """
+    Parse a YAML file and return the loaded dictionary.
+    If yaml_path is None, defaults to PROJ_ROOT/config.yaml.
+    """
+    if yaml_path is None:
+        yaml_path = PROJ_ROOT / "config.yaml"
+    with open(yaml_path, 'r') as f:
+        return yaml.safe_load(f)
+
+def parse_config(config_path=None):
+    """
+    Parse a config file (INI or YAML) and return the appropriate object.
+    If config_path is None, tries config.ini then config.yaml in PROJ_ROOT.
+    """
+    if config_path is None:
+        ini_path = PROJ_ROOT / "config.ini"
+        yaml_path = PROJ_ROOT / "config.yaml"
+        if ini_path.exists():
+            config_path = ini_path
+        elif yaml_path.exists():
+            config_path = yaml_path
+        else:
+            raise FileNotFoundError("No config.ini or config.yaml found in project root.")
+    config_path = Path(config_path)
+    if config_path.suffix in ['.yaml', '.yml']:
+        return parse_yaml(config_path)
+    else:
+        return parse_ini(config_path)
+
+
+def get_ini_value(section, key, ini_path=None, fallback=None):
+    """
+    Get a value from the config.ini file by section and key.
+    Returns fallback if not found.
+    """
+    config = parse_ini(ini_path)
+    return config.get(section, key, fallback=fallback)
+
+def get_yaml_value(key_path, yaml_path=None, fallback=None):
+    """
+    Get a value from a YAML config file using a list of keys (key_path).
+    Example: key_path=["section", "subkey"]
+    Returns fallback if not found.
+    """
+    data = parse_yaml(yaml_path)
+    d = data
+    try:
+        for k in key_path:
+            d = d[k]
+        return d
+    except (KeyError, TypeError):
+        return fallback
 
 REPORTS_DIR = PROJ_ROOT / "reports"
 FIGURES_DIR = REPORTS_DIR / "figures"
@@ -36,21 +107,4 @@ try:
 except ModuleNotFoundError:
     pass
 
-# print all values in .env file
-logger.info("Environment variables:")
-for key in os.environ:
-    logger.info(f"{key}: {os.environ[key]}")
 
-    # check to see if SNAKEMAKE_ANALYSIS_TABLE_RESULTS contains .tsv files
-    if key == "SNAKEMAKE_ANALYSIS_TABLE_RESULTS":
-        tsv_files = [f for f in os.listdir(os.environ[key]) if f.endswith('.tsv')]
-        if tsv_files:
-            logger.info(f"List of .tsv files: {tsv_files}")
-            # make the SNAKEMAKE_ANALYSIS_TABLE_RESULTS_ZARR directory if it doesn't exist
-            if not os.path.exists(os.environ["SNAKEMAKE_ANALYSIS_TABLE_RESULTS_ZARR"]):
-                os.makedirs(os.environ["SNAKEMAKE_ANALYSIS_TABLE_RESULTS_ZARR"])
-        else:
-            logger.info(f"No .tsv files found in {key}, using ")
-            # print all files in the SNKEMAKE_ANALYSIS_TABLE_RESULTS directory
-            print(f"List of files in {key}: {os.listdir(os.environ[key])}")
-            print(f"List of .tsv files: {tsv_files}")

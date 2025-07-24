@@ -8,6 +8,6 @@
 #sbatch       --time=01-00:10:00
 
 # creates a slurm job where you have access with the specified resources.  The job is interactive and you can run commands in the terminal.
-srun -c 1 --mem-per-cpu=7g --time=01-00:10:00 --nodes=1 --pty bash -i
+srun -c 4 --mem-per-cpu=7g --time=00-10:10:00 --nodes=1 --pty bash -i
 
 

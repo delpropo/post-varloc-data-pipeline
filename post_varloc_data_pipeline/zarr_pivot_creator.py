@@ -39,7 +39,7 @@ class ZarrFilterPivotCreator:
         self.config_file = config_file
         self.config = None
         # Essential columns for pivot operations
-        self.essential_columns = ['SAMPLE', 'CHROM', 'POS', 'REF', 'ALT']
+        self.essential_columns = ['SAMPLE', 'CHROM', 'POS', 'REF', 'ALT', "FORMAT['SAOBS']"]
         # Additional essential columns to include if they exist (removed ANN['MAX_AF'] to preserve null values)
         self.additional_essential = []
         self.load_config(config_file)
@@ -227,7 +227,7 @@ class ZarrFilterPivotCreator:
 
         return mask
 
-    def create_filtered_pivoted_zarr(self, zarr_path: str, output_path: str = None) -> tuple[str, pd.DataFrame]:
+    def create_filtered_pivoted_zarr(self, zarr_path: str, output_path: str = None, remove_validation_errors: bool = False) -> tuple[str, pd.DataFrame]:
         """Create a filtered and pivoted Zarr file based on configuration criteria."""
         print(f"Loading Zarr file: {zarr_path}")
 
@@ -299,9 +299,31 @@ class ZarrFilterPivotCreator:
         # Drop specified columns (keep all others)
         drop_columns = self.get_columns_to_drop()
         if drop_columns:
+            # Debug output: print DataFrame columns and drop_columns from config
+            print("\n[DEBUG] DataFrame columns:")
+            for col in df.columns:
+                print(f"  '{col}'")
+            print("[DEBUG] drop_columns from config:")
+            for col in drop_columns:
+                print(f"  '{col}'")
+
             # Only drop columns that actually exist in the DataFrame
             columns_to_drop = [col for col in drop_columns if col in df.columns]
             missing_drop_columns = [col for col in drop_columns if col not in df.columns]
+
+            # Additional debug: Show exact matches
+            print("\n[DEBUG] Column matching results:")
+            for drop_col in drop_columns:
+                if drop_col in df.columns:
+                    print(f"  MATCH: '{drop_col}' will be dropped")
+                else:
+                    print(f"  NO MATCH: '{drop_col}' not found in DataFrame")
+                    # Check for similar columns
+                    similar = [col for col in df.columns if drop_col.lower() in col.lower() or col.lower() in drop_col.lower()]
+                    if similar:
+                        print(f"    Similar columns found: {similar}")
+
+            print(f"\n[DEBUG] Will drop {len(columns_to_drop)} columns: {columns_to_drop}")
 
             if missing_drop_columns:
                 print(f"Info: Drop columns not found in data: {missing_drop_columns}")
@@ -317,9 +339,15 @@ class ZarrFilterPivotCreator:
 
         filtered_rows = len(df)
 
+
+        # Debug: print columns present after dropping, before aggregation
+        print("\n[DEBUG] Columns present after dropping, before aggregation:")
+        for col in df.columns:
+            print(f"  '{col}'")
+
         # STEP 2: Apply pivot operations
         filename = Path(zarr_path).stem
-        df = self.apply_pivot_operations(df, filename)
+        df = self.apply_pivot_operations(df, filename, remove_validation_errors)
 
         final_rows = len(df)
 
@@ -371,31 +399,16 @@ class ZarrFilterPivotCreator:
             df: DataFrame to check
 
         Returns:
-            List of available essential columns
+            List of available essential columns (only core essential columns)
         """
         available_essential = []
 
-        # First check core essential columns (required for basic pivot)
+        # Only check core essential columns (required for basic pivot)
         for col in self.essential_columns:
             if col in df.columns:
                 available_essential.append(col)
             else:
                 print(f"Warning: Core essential column '{col}' not found in data")
-
-        # Then check additional essential columns (include if available)
-        for col in self.additional_essential:
-            if col in df.columns:
-                available_essential.append(col)
-                print(f"Info: Including additional essential column '{col}'")
-            else:
-                print(f"Info: Additional essential column '{col}' not found in data")
-
-        # Find and include any HGVS annotation columns
-        hgvs_columns = [col for col in df.columns if col.startswith("ANN['HGVS")]
-        for col in hgvs_columns:
-            if col not in available_essential:
-                available_essential.append(col)
-                print(f"Info: Including HGVS annotation column '{col}'")
 
         if not available_essential:
             # Fallback to basic genomic coordinates if no essential columns found
@@ -435,18 +448,22 @@ class ZarrFilterPivotCreator:
                 str_values = [str(val) for val in unique_values if str(val) not in ['nan', 'None']]
                 return ';'.join(str_values) if str_values else None
 
-    def apply_pivot_operations(self, df: pd.DataFrame, filename: str) -> pd.DataFrame:
+    def apply_pivot_operations(self, df: pd.DataFrame, filename: str, remove_validation_errors: bool = False) -> pd.DataFrame:
         """
         Apply pivot operations to convert long format to wide format.
 
         Args:
             df: Filtered dataframe
             filename: Source filename for metadata
+            remove_validation_errors: If True, remove validation error rows and save to separate file
 
         Returns:
             Pivoted dataframe
         """
         print("Applying pivot operations to filtered data...")
+
+        # Store original data for validation error reporting
+        original_df = df.copy() if remove_validation_errors else None
 
         # Get available essential columns
         available_essential = self.get_available_essential_columns(df)
@@ -489,6 +506,156 @@ class ZarrFilterPivotCreator:
         result_df['FILENAME'] = filename
 
         print(f"  Pivot complete: {df.shape} -> {result_df.shape}")
+
+        # VALIDATION CHECK: Verify genomic coordinate uniqueness
+        print("  Performing data integrity validation...")
+        genomic_coords = ['SAMPLE', 'CHROM', 'POS', 'REF', 'ALT']
+        available_genomic_coords = [col for col in genomic_coords if col in result_df.columns]
+
+        if len(available_genomic_coords) >= 4:  # Need at least CHROM, POS, REF, ALT
+            print(f"  Validating uniqueness for genomic coordinates: {available_genomic_coords}")
+
+            # Group by genomic coordinates and count rows per group
+            validation_groups = result_df.groupby(available_genomic_coords).size()
+            duplicate_groups = validation_groups[validation_groups > 1]
+
+            if len(duplicate_groups) > 0:
+                print(f"  ❌ VALIDATION FAILED: Found {len(duplicate_groups)} genomic coordinate combinations with multiple rows!")
+
+                if remove_validation_errors:
+                    print("  🔧 REMOVING VALIDATION ERRORS: Extracting duplicate rows to separate file...")
+
+                    # Find all rows that are duplicates based on genomic coordinates
+                    duplicate_mask = pd.Series([False] * len(result_df))
+
+                    for coords in duplicate_groups.index:
+                        if isinstance(coords, tuple):
+                            # Multi-column grouping
+                            coord_dict = dict(zip(available_genomic_coords, coords))
+                            mask = pd.Series([True] * len(result_df))
+                            for col, val in coord_dict.items():
+                                mask = mask & (result_df[col] == val)
+                            duplicate_mask = duplicate_mask | mask
+                        else:
+                            # Single column grouping
+                            duplicate_mask = duplicate_mask | (result_df[available_genomic_coords[0]] == coords)
+
+                    # Extract duplicate coordinate combinations from pivoted data
+                    error_pivoted_rows = result_df[duplicate_mask].copy()
+                    print(f"  Found {len(error_pivoted_rows)} pivoted rows with validation errors")
+
+                    # Find all original rows that contributed to these duplicate combinations
+                    original_error_rows = []
+                    for _, error_row in error_pivoted_rows.iterrows():
+                        # Create mask to find all original rows matching this genomic coordinate combination
+                        original_mask = pd.Series([True] * len(original_df))
+                        for coord_col in available_genomic_coords:
+                            if coord_col in original_df.columns:
+                                original_mask = original_mask & (original_df[coord_col] == error_row[coord_col])
+
+                        # Add matching original rows
+                        matching_original = original_df[original_mask]
+                        if len(matching_original) > 0:
+                            original_error_rows.append(matching_original)
+
+                    # Combine all original error rows
+                    if original_error_rows:
+                        combined_original_errors = pd.concat(original_error_rows, ignore_index=True)
+                        # Remove duplicates (in case same original row contributed to multiple validation errors)
+                        combined_original_errors = combined_original_errors.drop_duplicates()
+                        print(f"  Found {len(combined_original_errors)} original rows that caused validation errors")
+                    else:
+                        combined_original_errors = pd.DataFrame()
+                        print("  Warning: No original rows found for validation errors")
+
+                    # Save validation errors to TSV file in logs directory
+                    logs_dir = Path("logs")
+                    logs_dir.mkdir(exist_ok=True)
+                    error_filename = logs_dir / f"validation_errors_{filename}.tsv"
+                    print(f"  Saving original validation error rows to: {error_filename}")
+
+                    # Convert nullable types to standard types for TSV export
+                    if len(combined_original_errors) > 0:
+                        export_error_df = combined_original_errors.copy()
+                        for col in export_error_df.columns:
+                            if export_error_df[col].dtype.name in ['Int64', 'boolean']:
+                                if export_error_df[col].dtype.name == 'Int64':
+                                    export_error_df[col] = export_error_df[col].astype('float64')
+                                elif export_error_df[col].dtype.name == 'boolean':
+                                    export_error_df[col] = export_error_df[col].astype('object')
+
+                        # Save to TSV
+                        export_error_df.to_csv(error_filename, sep='\t', index=False, na_rep='.')
+                        print(f"  ✓ Saved {len(export_error_df)} original validation error rows to {error_filename}")
+                    else:
+                        # Create empty file with headers if no errors found
+                        pd.DataFrame(columns=original_df.columns).to_csv(error_filename, sep='\t', index=False, na_rep='.')
+                        print(f"  ✓ Created empty validation error file: {error_filename}")
+
+                    # Remove duplicate rows from result_df (pivoted data)
+                    result_df = result_df[~duplicate_mask].copy()
+                    print(f"  ✓ Removed validation error rows. Continuing with {len(result_df)} clean rows")
+
+                    # Re-validate the cleaned data
+                    print("  Re-validating cleaned data...")
+                    validation_groups_clean = result_df.groupby(available_genomic_coords).size()
+                    duplicate_groups_clean = validation_groups_clean[validation_groups_clean > 1]
+
+                    if len(duplicate_groups_clean) > 0:
+                        print(f"  ❌ ERROR: Still found {len(duplicate_groups_clean)} duplicate combinations after removal!")
+                        raise ValueError("Failed to remove all validation errors")
+                    else:
+                        unique_combinations = len(validation_groups_clean)
+                        print(f"  ✅ VALIDATION PASSED: All {unique_combinations} genomic coordinate combinations are now unique")
+
+                else:
+                    print("  Duplicate combinations with genomic coordinates:")
+
+                    # Collect duplicate coordinate details for error message
+                    duplicate_details = []
+                    for i, (coords, count) in enumerate(duplicate_groups.head(20).items()):
+                        if isinstance(coords, tuple):
+                            coord_dict = dict(zip(available_genomic_coords, coords))
+                            coord_str = ", ".join(f"{col}={val}" for col, val in coord_dict.items())
+                            # Store for error message (include genomic positions)
+                            genomic_info = f"CHROM={coord_dict.get('CHROM', 'N/A')} POS={coord_dict.get('POS', 'N/A')} REF={coord_dict.get('REF', 'N/A')} ALT={coord_dict.get('ALT', 'N/A')}"
+                            if 'SAMPLE' in coord_dict:
+                                genomic_info = f"SAMPLE={coord_dict['SAMPLE']} {genomic_info}"
+                            duplicate_details.append(f"{genomic_info} ({count} rows)")
+                        else:
+                            coord_str = f"{available_genomic_coords[0]}={coords}"
+                            duplicate_details.append(f"{coord_str} ({count} rows)")
+
+                        print(f"    {coord_str} -> {count} rows")
+
+                    if len(duplicate_groups) > 20:
+                        print(f"    ... and {len(duplicate_groups) - 20} more duplicate combinations")
+
+                    # Show total rows vs expected unique combinations
+                    total_rows = len(result_df)
+                    unique_combinations = len(validation_groups)
+                    print(f"  Expected unique combinations: {unique_combinations}")
+                    print(f"  Actual rows in result: {total_rows}")
+                    print(f"  Extra rows due to duplicates: {total_rows - unique_combinations}")
+
+                    # Create detailed error message with genomic coordinates
+                    error_msg = (f"Data integrity validation failed: {len(duplicate_groups)} genomic coordinate combinations have multiple rows. "
+                               f"Expected {unique_combinations} unique rows but found {total_rows} total rows.\n"
+                               f"Duplicate genomic coordinates (showing first {min(len(duplicate_details), 10)}):\n")
+
+                    for detail in duplicate_details[:10]:
+                        error_msg += f"  - {detail}\n"
+
+                    if len(duplicate_details) > 10:
+                        error_msg += f"  ... and {len(duplicate_details) - 10} more duplicates"
+
+                    raise ValueError(error_msg)
+            else:
+                unique_combinations = len(validation_groups)
+                print(f"  ✅ VALIDATION PASSED: All {unique_combinations} genomic coordinate combinations are unique")
+        else:
+            print(f"  ⚠️  VALIDATION SKIPPED: Insufficient genomic coordinate columns found ({available_genomic_coords})")
+
         return result_df
 
     def prepare_dataframe_for_xarray(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -543,6 +710,7 @@ def main():
     parser.add_argument('--gene-filter', '-g', help='TSV file with Gene Symbol column for filtering variants')
     parser.add_argument('--export-tsv', action='store_true', help='Also export processed data as TSV file')
     parser.add_argument('--tsv-output', help='TSV output file path (default: same as zarr output with .tsv extension)')
+    parser.add_argument('--remove-validation-errors', action='store_true', help='Remove validation error rows and save them to a separate TSV file')
     parser.add_argument('--list-filters', action='store_true', help='List configured filters')
     parser.add_argument('--list-columns', action='store_true', help='List columns to keep/drop')
 
@@ -594,7 +762,7 @@ def main():
 
     # Create filtered and pivoted Zarr
     try:
-        output_path, processed_df = creator.create_filtered_pivoted_zarr(args.zarr, args.output)
+        output_path, processed_df = creator.create_filtered_pivoted_zarr(args.zarr, args.output, args.remove_validation_errors)
         print(f"✓ Successfully created filtered and pivoted Zarr: {output_path}")
 
         # Export TSV if requested
