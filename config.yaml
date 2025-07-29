@@ -1,0 +1,384 @@
+# Post-VarLoc Data Pipeline Configuration
+# YAML version of config.ini for easier parsing and better structure
+
+# Default settings
+DEFAULT: {}
+
+# SLURM configuration
+SLURM:
+  slurm_account: sooeunc0
+
+# SLURM job configurations
+slurm_create_tsv:
+  cpus-per-task: 1
+  mem: 7G
+  time: "2:00:00"
+  txt_file: sooeunc_bcf.txt
+
+slurm_vembrane_tsv_to_zarr:
+  cpus-per-task: 1
+  mem: 14G
+  time: "2:00:00"
+  txt_file: sooeunc_tsv_files.txt
+
+slurm_zarr_pivot_creator:
+  cpus-per-task: 3
+  mem-per-cpu: 7G
+  time: "2:00:00"
+  txt_file: sooeunc_for_pivot.txt
+  export_tsv: true
+  remove_validation_errors: true
+
+slurm_zarr_groupby_aggregator:
+  cpus-per-task: 6
+  mem-per-cpu: 7G
+  time: "1-00:00:00"
+  txt_file: sooeunc_aggregator.txt
+  export_tsv: true
+  keep_all_columns: true
+  row_count_cutoff: 9
+
+slurm_zarr_groupby_aggregator_row_count:
+  cpus-per-task: 8
+  mem-per-cpu: 7G
+  time: "2:00:00"
+  txt_file: subset_aggregator.txt
+  workers: 8
+  export_tsv: true
+  row_count_only: true
+
+# Sample information
+SAMPLE_INFO:
+  family: false
+
+# Zarr subset defaults
+ZARR_SUBSET_DEFAULTS:
+  compression: blosc
+  chunk_size: 1000
+  create_index: true
+  save_metadata: true
+
+# Column management
+COLUMN_MANAGEMENT:
+  # All possible column names that may appear in genomic datasets
+  possible_columns:
+    - SAMPLE
+    - CHROM
+    - POS
+    - REF
+    - ALT
+    - QUAL
+    - FILTER
+    - ID
+    - "INFO['SVLEN']"
+    - "INFO['END']"
+    - "INFO['SVTYPE']"
+    - "INFO['EVENT']"
+    - "INFO['MATEID']"
+    - "INFO['IMPRECISE']"
+    - "INFO['CIPOS']"
+    - "INFO['CIEND']"
+    - "INFO['HETEROZYGOSITY']"
+    - "INFO['SOMATIC_EFFECTIVE_MUTATION_RATE']"
+    - "INFO['ALT_INDEL_OPERATIONS']"
+    - "INFO['HINTS']"
+    - "INFO['known_E_gnomAD']"
+    - "INFO['known_CLIN_protective']"
+    - "INFO['known_CLIN_drug_response']"
+    - "INFO['known_AA']"
+    - "INFO['known_CLIN_association']"
+    - "INFO['known_CLIN_histocompatibility']"
+    - "INFO['known_dbSNP_156']"
+    - "INFO['known_MAC']"
+    - "INFO['known_MAF']"
+    - "INFO['known_E_Hapmap']"
+    - "INFO['known_E_Freq']"
+    - "INFO['known_E_Cited']"
+    - "INFO['known_CLIN_likely_benign']"
+    - "INFO['known_E_TOPMed']"
+    - "INFO['known_CLIN_risk_factor']"
+    - "INFO['known_CLIN_benign']"
+    - "INFO['known_CLIN_other']"
+    - "INFO['known_E_ESP']"
+    - "INFO['known_MA']"
+    - "INFO['known_CLIN_likely_pathogenic']"
+    - "INFO['known_TSA']"
+    - "INFO['known_HGMD-PUBLIC_20204']"
+    - "INFO['known_CLIN_uncertain_significance']"
+    - "INFO['known_ClinVar_202306']"
+    - "INFO['known_E_1000G']"
+    - "INFO['known_COSMIC_98']"
+    - "INFO['known_E_Multiple_observations']"
+    - "INFO['known_CLIN_pathogenic']"
+    - "INFO['known_CLIN_confers_sensitivity']"
+    - "INFO['known_E_Phenotype_or_Disease']"
+    - "INFO['known_E_ExAC']"
+    - "INFO['known_CLIN_not_provided']"
+    - "INFO['PROB_VARIANTS_UPDATE']"
+    - "INFO['PROB_ARTIFACT']"
+    - "INFO['PROB_ABSENT']"
+    - "FORMAT['DP']"
+    - "FORMAT['AF']"
+    - "FORMAT['SAOBS']"
+    - "FORMAT['SROBS']"
+    - "FORMAT['OBS']"
+    - "FORMAT['OOBS']"
+    - "FORMAT['SB']"
+    - "FORMAT['ROB']"
+    - "FORMAT['RPB']"
+    - "FORMAT['SCB']"
+    - "FORMAT['HE']"
+    - "FORMAT['ALB']"
+    - "FORMAT['AFD']"
+    - "FORMAT['GT']"
+    - "ANN['Allele']"
+    - "ANN['HGVS.c']"
+    - "ANN['Consequence']"
+    - "ANN['IMPACT']"
+    - "ANN['SYMBOL']"
+    - "ANN['Gene']"
+    - "ANN['Feature_type']"
+    - "ANN['Feature']"
+    - "ANN['BIOTYPE']"
+    - "ANN['EXON']"
+    - "ANN['INTRON']"
+    - "ANN['HGVSc']"
+    - "ANN['HGVSp']"
+    - "ANN['cDNA_position']"
+    - "ANN['CDS_position']"
+    - "ANN['Protein_position']"
+    - "ANN['Amino_acids']"
+    - "ANN['Codons']"
+    - "ANN['Existing_variation']"
+    - "ANN['DISTANCE']"
+    - "ANN['STRAND']"
+    - "ANN['FLAGS']"
+    - "ANN['VARIANT_CLASS']"
+    - "ANN['SYMBOL_SOURCE']"
+    - "ANN['HGNC_ID']"
+    - "ANN['CANONICAL']"
+    - "ANN['MANE_SELECT']"
+    - "ANN['MANE_PLUS_CLINICAL']"
+    - "ANN['TSL']"
+    - "ANN['APPRIS']"
+    - "ANN['CCDS']"
+    - "ANN['ENSP']"
+    - "ANN['SWISSPROT']"
+    - "ANN['TREMBL']"
+    - "ANN['UNIPARC']"
+    - "ANN['UNIPROT_ISOFORM']"
+    - "ANN['GENE_PHENO']"
+    - "ANN['SIFT']"
+    - "ANN['PolyPhen']"
+    - "ANN['DOMAINS']"
+    - "ANN['miRNA']"
+    - "ANN['HGVS_OFFSET']"
+    - "ANN['HGVSg']"
+    - "ANN['AF']"
+    - "ANN['AFR_AF']"
+    - "ANN['AMR_AF']"
+    - "ANN['EAS_AF']"
+    - "ANN['EUR_AF']"
+    - "ANN['SAS_AF']"
+    - "ANN['gnomADe_AMR_AF']"
+    - "ANN['gnomADe_ASJ_AF']"
+    - "ANN['gnomADe_EAS_AF']"
+    - "ANN['gnomADe_FIN_AF']"
+    - "ANN['gnomADe_NFE_AF']"
+    - "ANN['gnomADe_OTH_AF']"
+    - "ANN['gnomADe_SAS_AF']"
+    - "ANN['gnomADg_AF']"
+    - "ANN['gnomADg_AFR_AF']"
+    - "ANN['gnomADg_AMI_AF']"
+    - "ANN['gnomADg_AMR_AF']"
+    - "ANN['gnomADg_ASJ_AF']"
+    - "ANN['gnomADg_EAS_AF']"
+    - "ANN['gnomADg_FIN_AF']"
+    - "ANN['gnomADg_MID_AF']"
+    - "ANN['gnomADg_NFE_AF']"
+    - "ANN['gnomADg_OTH_AF']"
+    - "ANN['gnomADg_SAS_AF']"
+    - "ANN['MAX_AF']"
+    - "ANN['MAX_AF_POPS']"
+    - "ANN['CLIN_SIG']"
+    - "ANN['SOMATIC']"
+    - "ANN['PHENO']"
+    - "ANN['PUBMED']"
+    - "ANN['MOTIF_NAME']"
+    - "ANN['MOTIF_POS']"
+    - "ANN['HIGH_INF_POS']"
+    - "ANN['MOTIF_SCORE_CHANGE']"
+    - "ANN['TRANSCRIPTION_FACTORS']"
+    - "ANN['LoFtool']"
+    - "ANN['REVEL']"
+
+  # Columns to drop (done by zarr_pivot_creator)
+  drop_columns:
+    - "ANN['gnomADe_AF']"
+    - "ANN['gnomADe_AFR_AF']"
+    - "ANN['gnomADg_AMI_AF']"
+    - "FORMAT['OBS']"
+    - "ANN['AFR_AF']"
+    - "ANN['AMR_AF']"
+    - "ANN['EAS_AF']"
+    - "ANN['EUR_AF']"
+    - "ANN['SAS_AF']"
+    - "ANN['gnomADe_AF']"
+    - "ANN['gnomADe_AFR_AF']"
+    - "ANN['gnomADe_AMR_AF']"
+    - "ANN['gnomADe_ASJ_AF']"
+    - "ANN['gnomADe_EAS_AF']"
+    - "ANN['gnomADe_FIN_AF']"
+    - "ANN['gnomADe_NFE_AF']"
+    - "ANN['gnomADe_OTH_AF']"
+    - "ANN['gnomADe_SAS_AF']"
+    - "ANN['gnomADg_AF']"
+    - "ANN['gnomADg_AFR_AF']"
+    - "ANN['gnomADg_AMR_AF']"
+    - "ANN['gnomADg_ASJ_AF']"
+    - "ANN['gnomADg_EAS_AF']"
+    - "ANN['gnomADg_FIN_AF']"
+    - "ANN['gnomADg_MID_AF']"
+    - "ANN['gnomADg_NFE_AF']"
+    - "ANN['gnomADg_OTH_AF']"
+    - "ANN['gnomADg_SAS_AF']"
+    - "ANN['MAX_AF_POPS']"
+    - "ANN['DOMAINS']"
+    - "INFO['known_E_gnomAD']"
+    - "INFO['EVENT']"
+    - "INFO['known_MAF']"
+    - "INFO['known_E_1000G']"
+    - "INFO['HINTS']"
+    - "INFO['known_HGMD-PUBLIC_20204']"
+    - "INFO['HETEROZYGOSITY']"
+    - "ANN['TRANSCRIPTION_FACTORS']"
+    - "ANN['SWISSPROT']"
+    - "ANN['UNIPARC']"
+    - "ANN['HGNC_ID']"
+    - "ANN['TSL']"
+    - "ANN['INTRON']"
+    - "ANN['CCDS']"
+    - "INFO['known_CLIN_drug_response']"
+    - "ANN['SYMBOL_SOURCE']"
+    - "INFO['known_E_Cited']"
+    - "FORMAT['AFD']"
+    - "ANN['EXON']"
+    - "ANN['MOTIF_POS']"
+    - "ANN['APPRIS']"
+    - "ANN['STRAND']"
+    - "ANN['FLAGS']"
+    - "ANN['GENE_PHENO']"
+    - "FORMAT['SB']"
+    - "INFO['known_CLIN_not_provided']"
+    - "INFO['SOMATIC_EFFECTIVE_MUTATION_RATE']"
+    - "ANN['PUBMED']"
+    - "FORMAT['HE']"
+    - "FORMAT['GT']"
+    - "ANN['miRNA']"
+    - "ANN['TREMBL']"
+    - "INFO['known_E_ESP']"
+    - "INFO['known_MA']"
+    - "INFO['known_MAC']"
+    - "FORMAT['SCB']"
+    - "INFO['CIPOS']"
+    - "INFO['known_E_Freq']"
+
+# Filters
+FILTERS:
+  # Filter variants with MAX_AF above 0.2 (keep only rare variants)
+  "ANN['MAX_AF']": "<=:0.2"
+
+# Additional Zarr filtering configuration
+ADDITIONAL_ZARR_FILTERING:
+  OUTPUT_DIR: data/additional_filtering
+  GENE_FILTER: references/paper_and_2024_combined_reformatted_for_search.xlsx
+  COLUMN_ORDER:
+    - CHROM
+    - POS
+    - REF
+    - ALT
+    - "ANN['SYMBOL']"
+    - index
+    - "ANN['HGVS_OFFSET']"
+    - "ANN['REVEL']"
+    - "ANN['Codons']"
+    - "ANN['Amino_acids']"
+    - "ANN['HIGH_INF_POS']"
+    - "INFO['known_CLIN_other']"
+    - "INFO['CIEND']"
+    - "ANN['Feature_type']"
+    - "ANN['HGVSp']"
+    - SAMPLE
+    - "ANN['CANONICAL']"
+    - "INFO['PROB_ABSENT']"
+    - "ANN['AF']"
+    - "INFO['known_CLIN_pathogenic']"
+    - "INFO['known_CLIN_protective']"
+    - "ANN['Consequence']"
+    - "ANN['Protein_position']"
+    - "ANN['HGVSg']"
+    - "INFO['known_E_ExAC']"
+    - "INFO['known_CLIN_histocompatibility']"
+    - "ANN['MOTIF_NAME']"
+    - "ANN['PHENO']"
+    - FILTER
+    - "FORMAT['RPB']"
+    - "ANN['DISTANCE']"
+    - "FORMAT['ROB']"
+    - "ANN['MANE_SELECT']"
+    - "ANN['LoFtool']"
+    - "INFO['known_TSA']"
+    - "ANN['BIOTYPE']"
+    - "INFO['known_CLIN_benign']"
+    - "INFO['SVTYPE']"
+    - "ANN['ENSP']"
+    - "INFO['known_E_Multiple_observations']"
+    - "ANN['UNIPROT_ISOFORM']"
+    - "INFO['MATEID']"
+    - "INFO['known_CLIN_confers_sensitivity']"
+    - QUAL
+    - "FORMAT['SAOBS']"
+    - 13340-JD-10_AF
+    - "FORMAT['ALB']"
+    - "ANN['Feature']"
+    - "INFO['known_E_Hapmap']"
+    - "ANN['MOTIF_SCORE_CHANGE']"
+    - "ANN['CDS_position']"
+    - FILENAME
+    - filename
+    - "INFO['known_E_TOPMed']"
+    - "ANN['HGVSc']"
+    - "ANN['MAX_AF']"
+    - "INFO['SVLEN']"
+    - "INFO['known_CLIN_likely_pathogenic']"
+    - "ANN['MANE_PLUS_CLINICAL']"
+    - "INFO['known_COSMIC_98']"
+    - "ANN['SOMATIC']"
+    - "INFO['known_CLIN_uncertain_significance']"
+    - "FORMAT['OOBS']"
+    - "ANN['IMPACT']"
+    - "INFO['PROB_VARIANTS_UPDATE']"
+    - "INFO['known_dbSNP_156']"
+    - "ANN['VARIANT_CLASS']"
+    - "INFO['known_E_Phenotype_or_Disease']"
+    - "FORMAT['DP']"
+    - "INFO['ALT_INDEL_OPERATIONS']"
+    - "ANN['cDNA_position']"
+    - "ANN['CLIN_SIG']"
+    - "INFO['known_AA']"
+    - "ANN['Existing_variation']"
+    - ID
+    - "ANN['Allele']"
+    - "INFO['PROB_ARTIFACT']"
+    - "INFO['IMPRECISE']"
+    - "INFO['known_CLIN_association']"
+    - "INFO['END']"
+    - "ANN['SIFT']"
+    - "INFO['known_CLIN_risk_factor']"
+    - "INFO['known_ClinVar_202306']"
+    - "INFO['known_CLIN_likely_benign']"
+    - family
+    - "FORMAT['SROBS']"
+    - "ANN['Gene']"
+    - "ANN['PolyPhen']"
+    - ROW_COUNT

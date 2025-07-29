@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Create filtered and pivoted Zarr files based on configuration criteria defined in config.ini.
+Create filtered and pivoted Zarr files based on configuration criteria defined in config.yaml.
 Supports column filtering, data filtering, gene filtering, and pivot operations for genomic variant analysis.
 
 WORKFLOW:
 1. Apply gene filtering (if specified) to keep only variants with genes in the filter list
-2. Filter data based on configuration criteria (config.ini)
+2. Filter data based on configuration criteria (config.yaml)
 3. Apply pivot operations to convert long format to wide format
 4. Aggregate columns with identical/different values appropriately
 5. Add filename metadata and save processed zarr file
@@ -18,12 +18,17 @@ GENE FILTERING:
 """
 
 import argparse
-import configparser
 import pandas as pd
 import xarray as xr
 from pathlib import Path
 from typing import Dict, List, Any
 import warnings
+import sys
+import os
+
+# Add parent directory to path to access the config module
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from post_varloc_data_pipeline.config import parse_yaml
 
 # Suppress Zarr warnings
 warnings.filterwarnings('ignore', message='.*vlen-utf8.*')
@@ -32,9 +37,9 @@ warnings.filterwarnings('ignore', message='.*Consolidated metadata.*')
 
 
 class ZarrFilterPivotCreator:
-    """Create filtered and pivoted Zarr files based on config.ini criteria."""
+    """Create filtered and pivoted Zarr files based on config.yaml criteria."""
 
-    def __init__(self, config_file: str = "config.ini"):
+    def __init__(self, config_file: str = "config.yaml"):
         """Initialize with configuration file."""
         self.config_file = config_file
         self.config = None
@@ -47,9 +52,8 @@ class ZarrFilterPivotCreator:
         self.gene_filter_symbols = None
 
     def load_config(self, config_file: str) -> None:
-        """Load configuration from INI file."""
-        self.config = configparser.ConfigParser()
-        self.config.read(config_file)
+        """Load configuration from YAML file."""
+        self.config = parse_yaml(config_file)
 
     def load_gene_filter(self, gene_filter_file: str) -> None:
         """Load gene symbols from TSV file for filtering."""
@@ -114,12 +118,24 @@ class ZarrFilterPivotCreator:
         drop_columns = []
 
         # Check COLUMN_MANAGEMENT section first
-        if self.config.has_section('COLUMN_MANAGEMENT') and self.config.has_option('COLUMN_MANAGEMENT', 'drop_columns'):
-            drop_columns.extend([col.strip() for col in self.config.get('COLUMN_MANAGEMENT', 'drop_columns').split(',')])
+        if 'COLUMN_MANAGEMENT' in self.config and 'drop_columns' in self.config['COLUMN_MANAGEMENT']:
+            drop_config = self.config['COLUMN_MANAGEMENT']['drop_columns']
+            if isinstance(drop_config, list):
+                # Handle YAML list format
+                drop_columns.extend([col.strip() for col in drop_config if col.strip()])
+            else:
+                # Handle comma-separated string format
+                drop_columns.extend([col.strip() for col in drop_config.split(',') if col.strip()])
 
         # Also check legacy DROP_COLUMNS section for backward compatibility
-        if self.config.has_section('DROP_COLUMNS') and self.config.has_option('DROP_COLUMNS', 'columns'):
-            drop_columns.extend([col.strip() for col in self.config.get('DROP_COLUMNS', 'columns').split(',')])
+        if 'DROP_COLUMNS' in self.config and 'columns' in self.config['DROP_COLUMNS']:
+            drop_config = self.config['DROP_COLUMNS']['columns']
+            if isinstance(drop_config, list):
+                # Handle YAML list format
+                drop_columns.extend([col.strip() for col in drop_config if col.strip()])
+            else:
+                # Handle comma-separated string format
+                drop_columns.extend([col.strip() for col in drop_config.split(',') if col.strip()])
 
         # Remove empty strings and duplicates
         drop_columns = list(set([col for col in drop_columns if col.strip()]))
@@ -128,14 +144,10 @@ class ZarrFilterPivotCreator:
     def get_filters(self) -> Dict[str, Dict[str, Any]]:
         """Get filtering criteria from configuration."""
         filters = {}
-        if not self.config.has_section('FILTERS'):
+        if 'FILTERS' not in self.config:
             return filters
 
-        for column, filter_str in self.config.items('FILTERS'):
-            # Skip DEFAULT section items that get inherited
-            if column in self.config.defaults():
-                continue
-
+        for column, filter_str in self.config['FILTERS'].items():
             if ':' in filter_str:
                 operator, value = filter_str.split(':', 1)
 
@@ -148,8 +160,7 @@ class ZarrFilterPivotCreator:
                 elif value.lower() in ['true', 'false']:
                     value = value.lower() == 'true'
 
-                # ConfigParser converts keys to lowercase by default
-                # We need to find the actual column name with correct case
+                # Use column name as provided in YAML (case-sensitive)
                 original_column = column
 
                 # Check if this is a case-sensitivity issue - try to match against actual columns in data
@@ -234,6 +245,9 @@ class ZarrFilterPivotCreator:
         # Load the Zarr file
         ds = xr.open_zarr(zarr_path)
         df = ds.to_dataframe().reset_index()
+
+        # Store original column order to preserve throughout processing
+        original_column_order = df.columns.tolist()
 
         original_rows = len(df)
         print(f"BEFORE: Original data shape: {df.shape} ({original_rows:,} rows)")
@@ -330,7 +344,9 @@ class ZarrFilterPivotCreator:
 
             if columns_to_drop:
                 original_column_count = len(df.columns)
-                df = df.drop(columns=columns_to_drop)
+                # Preserve column order by selecting columns to keep in their original order
+                columns_to_keep = [col for col in original_column_order if col in df.columns and col not in columns_to_drop]
+                df = df[columns_to_keep]
                 print(f"Dropped {len(columns_to_drop)} columns, keeping {len(df.columns)} columns (was {original_column_count})")
             else:
                 print("No columns to drop")
@@ -465,13 +481,18 @@ class ZarrFilterPivotCreator:
         # Store original data for validation error reporting
         original_df = df.copy() if remove_validation_errors else None
 
+        # Store original column order for preservation
+        original_column_order = df.columns.tolist()
+
         # Get available essential columns
         available_essential = self.get_available_essential_columns(df)
 
         if not available_essential:
             print("Warning: No suitable columns found for pivot operations")
+            # Maintain original order and add FILENAME at the end
+            column_order = original_column_order + ['FILENAME']
             df['FILENAME'] = filename
-            return df
+            return df[column_order]
 
         # Identify other columns (not in essential columns)
         all_columns = df.columns.tolist()
@@ -480,6 +501,7 @@ class ZarrFilterPivotCreator:
         # Remove 'index' column if it exists (auto-generated by xarray/pandas conversion)
         if 'index' in other_columns:
             other_columns.remove('index')
+            original_column_order = [col for col in original_column_order if col != 'index']
             print("  Removing 'index' column from aggregation")
 
         print(f"  Essential columns for pivot: {available_essential}")
@@ -487,8 +509,10 @@ class ZarrFilterPivotCreator:
 
         if not other_columns:
             print("  No additional columns to aggregate")
+            # Maintain original order and add FILENAME at the end
+            column_order = original_column_order + ['FILENAME']
             df['FILENAME'] = filename
-            return df
+            return df[column_order]
 
         # Group by essential columns and aggregate others
         grouped = df.groupby(available_essential)
@@ -504,6 +528,20 @@ class ZarrFilterPivotCreator:
 
         # Add filename column
         result_df['FILENAME'] = filename
+
+        # Restore original column order, adding FILENAME at the end
+        # Essential columns maintain their original order, other columns maintain their original order
+        desired_order = []
+        for col in original_column_order:
+            if col in result_df.columns:
+                desired_order.append(col)
+
+        # Add FILENAME at the end if not already in the desired order
+        if 'FILENAME' not in desired_order:
+            desired_order.append('FILENAME')
+
+        # Reorder columns to match original order
+        result_df = result_df[desired_order]
 
         print(f"  Pivot complete: {df.shape} -> {result_df.shape}")
 
@@ -666,11 +704,14 @@ class ZarrFilterPivotCreator:
             df: DataFrame to prepare
 
         Returns:
-            DataFrame with consistent column data types
+            DataFrame with consistent column data types, preserving original column order
         """
         df_clean = df.copy()
 
-        for col in df_clean.columns:
+        # Store original column order
+        original_order = df_clean.columns.tolist()
+
+        for col in original_order:  # Process in original order
             # Check if column has mixed types (object dtype with mixed content)
             if df_clean[col].dtype == 'object':
                 # Check if all non-null values are of the same type
@@ -699,13 +740,14 @@ class ZarrFilterPivotCreator:
                             df_clean[col] = df_clean[col].astype(str)
                             df_clean[col] = df_clean[col].replace('nan', None)
 
-        return df_clean
+        # Ensure the DataFrame maintains the original column order
+        return df_clean[original_order]
 
 def main():
     """Main function."""
-    parser = argparse.ArgumentParser(description='Create filtered and pivoted Zarr files based on config.ini criteria')
+    parser = argparse.ArgumentParser(description='Create filtered and pivoted Zarr files based on config.yaml criteria')
     parser.add_argument('--zarr', '-z', required=True, help='Input Zarr file path')
-    parser.add_argument('--config', '-c', default='config.ini', help='Configuration file (default: config.ini)')
+    parser.add_argument('--config', '-c', default='config.yaml', help='Configuration file (default: config.yaml)')
     parser.add_argument('--output', '-o', help='Output Zarr file path')
     parser.add_argument('--gene-filter', '-g', help='TSV file with Gene Symbol column for filtering variants')
     parser.add_argument('--export-tsv', action='store_true', help='Also export processed data as TSV file')

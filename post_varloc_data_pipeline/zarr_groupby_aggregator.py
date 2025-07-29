@@ -10,7 +10,7 @@ AGGREGATION STRATEGY:
 - Pivot on: CHROM, POS, REF, ALT (genomic coordinates only)
 - Include specific ANN columns: MAX_AF, VARIANT_CLASS, Feature_type, IMPACT, SYMBOL
 - Include all INFO columns
-- Handle FORMAT['AF'] by family (preserve as 1_AF, 2_AF, etc    # Dask options
+- Handle FORMAT['AF'] by family (preserve as AF_1, AF_2, etc    # Dask options
     parser.add_argument('--workers', type=int, help='Number of Dask workers (default: auto-detect all cores)')
     parser.add_argument('--chunk-size', default='1GB', help='Chunk size for Dask processing (default: 1GB)')- Add ROW_COUNT showing number of rows combined per variant
 - Save final aggregated results
@@ -285,7 +285,7 @@ class ZarrCrossFileAggregator:
                     # Rename FORMAT['AF'] column to be family-specific
                     format_af_cols = [col for col in df.columns if col.startswith("FORMAT[") and "'AF'" in col]
                     for af_col in format_af_cols:
-                        new_col_name = f"{family_name}_AF"
+                        new_col_name = f"AF_{family_name}"
                         df = df.rename(columns={af_col: new_col_name})
                         print(f"    Renamed {af_col} to {new_col_name}")
                 else:
@@ -299,7 +299,7 @@ class ZarrCrossFileAggregator:
                     # Rename FORMAT['AF'] column to be family-specific
                     format_af_cols = [col for col in df.columns if col.startswith("FORMAT[") and "'AF'" in col]
                     for af_col in format_af_cols:
-                        new_col_name = f"{family_name}_AF"
+                        new_col_name = f"AF_{family_name}"
                         df = df.rename(columns={af_col: new_col_name})
                         print(f"    Renamed {af_col} to {new_col_name}")
 
@@ -343,7 +343,7 @@ class ZarrCrossFileAggregator:
                 print(f"  Including {len(info_columns)} INFO columns")
 
                 # 4. Find family-specific AF columns
-                family_af_columns = [col for col in available_columns if col.endswith('_AF')]
+                family_af_columns = [col for col in available_columns if col.startswith('AF_')]
                 columns_to_keep.extend(family_af_columns)
                 if family_af_columns:
                     print(f"  Including family-specific AF columns: {family_af_columns}")
@@ -373,7 +373,7 @@ class ZarrCrossFileAggregator:
             if agg_columns:
                 agg_dict = {}
                 for col in agg_columns:
-                    if col.endswith('_AF'):
+                    if col.startswith('AF_'):
                         # For family-specific AF columns, use family-specific aggregation
                         agg_dict[col] = self.aggregate_family_af_values
                     else:
@@ -422,7 +422,7 @@ class ZarrCrossFileAggregator:
         """
         # Get all family names and sort them for consistent ordering
         all_families = sorted(set(file_families.values()))
-        family_af_columns = [f"{family}_AF" for family in all_families]
+        family_af_columns = [f"AF_{family}" for family in all_families]
 
         print(f"  Expected family AF columns: {family_af_columns}")
 
@@ -433,7 +433,7 @@ class ZarrCrossFileAggregator:
                 print(f"  Created missing column: {expected_col}")
 
         # Validate that each row has at most one non-null family AF value per variant
-        af_columns_in_df = [col for col in combined_df.columns if col.endswith('_AF')]
+        af_columns_in_df = [col for col in combined_df.columns if col.startswith('AF_')]
 
         # Group by genomic coordinates and check AF distribution
         grouped = combined_df.groupby(self.pivot_columns)
@@ -670,7 +670,7 @@ Output columns:
   - Pivot: CHROM, POS, REF, ALT
   - ANN: MAX_AF, VARIANT_CLASS, Feature_type, IMPACT, SYMBOL
   - All INFO columns
-  - Family-specific AF: 1_AF, 2_AF, 3_AF, etc.
+  - Family-specific AF: AF_1, AF_2, AF_3, etc.
   - ROW_COUNT (number of rows combined)
 
 With --row-count-only:

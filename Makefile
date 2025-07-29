@@ -206,7 +206,7 @@ test_zarr_groupby_aggregator:
 	echo "Step 2: Aggregating processed files with zarr_groupby_aggregator.py..."; \
 	jobid2=$$(sbatch --parsable --time=1:00:00 --cpus-per-task=4 --job-name=zarr_groupby_step2 \
 		--output=tests/data/test_ann_all/zarr_groupby_step2.slurm.out \
-		--wrap="source ~/.bashrc && conda activate post-varloc-data-pipeline && python post_varloc_data_pipeline/zarr_groupby_aggregator.py --zarr tests/data/test_ann_all/zarr_output/processed/expected_processed.zarr --output tests/data/test_ann_all/zarr_output/aggregated/grouped_results.tsv --workers 4 --export-tsv"); \
+		--wrap="source ~/.bashrc && conda activate post-varloc-data-pipeline && python post_varloc_data_pipeline/zarr_groupby_aggregator.py --zarr tests/data/test_ann_all/zarr_output/processed/expected_processed.zarr --output tests/data/test_ann_all/zarr_output/aggregated/grouped_results.tsv  --export-tsv"); \
 	echo "Submitted aggregation job $$jobid2, waiting for completion..."; \
 	while squeue -j $$jobid2 2>/dev/null | grep -q $$jobid2; do \
 		echo "Aggregation job $$jobid2 still running, waiting..."; \
@@ -477,9 +477,9 @@ zarr_pivot_creator:
 ## Create filtered and pivoted Zarr file(s) using SLURM batch jobs
 .PHONY: slurm_zarr_pivot_creator
 slurm_zarr_pivot_creator:
-	@config_file=$$(sed -n '/^\[slurm_zarr_pivot_creator\]/,/^\[/p' config.ini | grep '^txt_file' | cut -d'=' -f2 | tr -d ' '); \
+	@config_file=$$($(PYTHON_INTERPRETER) scripts/get_config_value.py --section slurm_zarr_pivot_creator --key txt_file); \
 	if [ -z "$$config_file" ]; then \
-		echo "Error: txt_file not found in [slurm_zarr_pivot_creator] section of config.ini"; \
+		echo "Error: txt_file not found in [slurm_zarr_pivot_creator] section of config.yaml"; \
 		exit 1; \
 	fi; \
 	if [ ! -f "config/$$config_file" ]; then \
@@ -487,21 +487,23 @@ slurm_zarr_pivot_creator:
 		exit 1; \
 	fi; \
 	input_path="$$(realpath config/$$config_file)"; \
-	echo "Using config file from config.ini: config/$$config_file"; \
-	slurm_account=$$(grep -E "^slurm_account\s*=" config.ini | cut -d'=' -f2 | tr -d ' '); \
+	echo "Using config file from config.yaml: config/$$config_file"; \
+	slurm_account=$$($(PYTHON_INTERPRETER) scripts/get_config_value.py --section SLURM --key slurm_account --fallback ""); \
 	if [ -z "$$slurm_account" ]; then \
-		echo "Warning: slurm_account not found in config.ini, proceeding without --account flag"; \
+		echo "Warning: slurm_account not found in config.yaml, proceeding without --account flag"; \
 	else \
 		echo "Using SLURM account: $$slurm_account"; \
 	fi; \
-	cpus_per_task=$$(awk -F'=' '/^\[slurm_zarr_pivot_creator\]/,/^\[/{if(/^cpus-per-task\s*=/) {gsub(/^[ \t]+|[ \t]+$$/, "", $$2); print $$2}}' config.ini); \
-	mem_per_cpu=$$(awk -F'=' '/^\[slurm_zarr_pivot_creator\]/,/^\[/{if(/^mem-per-cpu\s*=/) {gsub(/^[ \t]+|[ \t]+$$/, "", $$2); print $$2}}' config.ini); \
-	time=$$(awk -F'=' '/^\[slurm_zarr_pivot_creator\]/,/^\[/{if(/^time\s*=/) {gsub(/^[ \t]+|[ \t]+$$/, "", $$2); print $$2}}' config.ini); \
-	if [ -z "$$cpus_per_task" ] || [ -z "$$mem_per_cpu" ] || [ -z "$$time" ]; then \
-		echo "Error: Missing SLURM parameters in [slurm_zarr_pivot_creator] section of config.ini"; \
+	if ! $(PYTHON_INTERPRETER) scripts/get_config_value.py --section slurm_zarr_pivot_creator --check-required cpus-per-task mem-per-cpu time >/dev/null 2>&1; then \
+		echo "Error: Missing SLURM parameters in [slurm_zarr_pivot_creator] section of config.yaml"; \
 		exit 1; \
 	fi; \
+	cpus_per_task=$$($(PYTHON_INTERPRETER) scripts/get_config_value.py --section slurm_zarr_pivot_creator --key cpus-per-task); \
+	mem_per_cpu=$$($(PYTHON_INTERPRETER) scripts/get_config_value.py --section slurm_zarr_pivot_creator --key mem-per-cpu); \
+	time=$$($(PYTHON_INTERPRETER) scripts/get_config_value.py --section slurm_zarr_pivot_creator --key time); \
 	echo "Using SLURM parameters: CPUs=$$cpus_per_task, Memory=$$mem_per_cpu per CPU, Time=$$time"; \
+	app_flags=$$($(PYTHON_INTERPRETER) scripts/get_config_value.py --section slurm_zarr_pivot_creator --get-flags); \
+	echo "Using application flags: $$app_flags"; \
 	mkdir -p data/filtered logs; \
 	if [ -f "$$input_path" ] && [ "$${input_path##*.}" = "txt" ]; then \
 		echo "Processing Zarr files listed in: $$input_path"; \
@@ -514,11 +516,11 @@ slurm_zarr_pivot_creator:
 				if [ -n "$$slurm_account" ]; then \
 					jobid=$$(sbatch --parsable --account="$$slurm_account" --time="$$time" --cpus-per-task="$$cpus_per_task" --mem-per-cpu="$$mem_per_cpu" \
 						--job-name="$$job_name" --output="$$log_file" \
-						--wrap="source ~/.bashrc && conda activate $(PROJECT_NAME) && $(PYTHON_INTERPRETER) post_varloc_data_pipeline/zarr_pivot_creator.py --zarr '$$zarr_file' --export-tsv --remove-validation-errors"); \
+						--wrap="source ~/.bashrc && conda activate $(PROJECT_NAME) && $(PYTHON_INTERPRETER) post_varloc_data_pipeline/zarr_pivot_creator.py --zarr '$$zarr_file' $$app_flags"); \
 				else \
 					jobid=$$(sbatch --parsable --time="$$time" --cpus-per-task="$$cpus_per_task" --mem-per-cpu="$$mem_per_cpu" \
 						--job-name="$$job_name" --output="$$log_file" \
-						--wrap="source ~/.bashrc && conda activate $(PROJECT_NAME) && $(PYTHON_INTERPRETER) post_varloc_data_pipeline/zarr_pivot_creator.py --zarr '$$zarr_file' --export-tsv --remove-validation-errors"); \
+						--wrap="source ~/.bashrc && conda activate $(PROJECT_NAME) && $(PYTHON_INTERPRETER) post_varloc_data_pipeline/zarr_pivot_creator.py --zarr '$$zarr_file' $$app_flags"); \
 				fi; \
 				job_ids+=($$jobid); \
 				echo "  Submitted job $$jobid for $$zarr_file"; \
@@ -544,11 +546,11 @@ slurm_zarr_pivot_creator:
 		if [ -n "$$slurm_account" ]; then \
 			jobid=$$(sbatch --parsable --account="$$slurm_account" --time="$$time" --cpus-per-task="$$cpus_per_task" --mem-per-cpu="$$mem_per_cpu" \
 				--job-name="$$job_name" --output="$$log_file" \
-				--wrap="source ~/.bashrc && conda activate $(PROJECT_NAME) && $(PYTHON_INTERPRETER) post_varloc_data_pipeline/zarr_pivot_creator.py --zarr '$$input_path' --export-tsv --remove-validation-errors"); \
+				--wrap="source ~/.bashrc && conda activate $(PROJECT_NAME) && $(PYTHON_INTERPRETER) post_varloc_data_pipeline/zarr_pivot_creator.py --zarr '$$input_path' $$app_flags"); \
 		else \
 			jobid=$$(sbatch --parsable --time="$$time" --cpus-per-task="$$cpus_per_task" --mem-per-cpu="$$mem_per_cpu" \
 				--job-name="$$job_name" --output="$$log_file" \
-				--wrap="source ~/.bashrc && conda activate $(PROJECT_NAME) && $(PYTHON_INTERPRETER) post_varloc_data_pipeline/zarr_pivot_creator.py --zarr '$$input_path' --export-tsv --remove-validation-errors"); \
+				--wrap="source ~/.bashrc && conda activate $(PROJECT_NAME) && $(PYTHON_INTERPRETER) post_varloc_data_pipeline/zarr_pivot_creator.py --zarr '$$input_path' $$app_flags"); \
 		fi; \
 		echo "Submitted job $$jobid for $$input_path"; \
 		echo "Monitoring job completion..."; \
@@ -579,9 +581,9 @@ zarr_groupby_aggregator:
 ## Aggregate processed Zarr files using SLURM batch jobs (expects files already processed by zarr_pivot_creator)
 .PHONY: slurm_zarr_groupby_aggregator
 slurm_zarr_groupby_aggregator:
-	@config_file=$$(sed -n '/^\[slurm_zarr_groupby_aggregator\]/,/^\[/p' config.ini | grep '^txt_file' | cut -d'=' -f2 | tr -d ' '); \
+	@config_file=$$($(PYTHON_INTERPRETER) scripts/get_config_value.py --section slurm_zarr_groupby_aggregator --key txt_file); \
 	if [ -z "$$config_file" ]; then \
-		echo "Error: txt_file not found in [slurm_zarr_groupby_aggregator] section of config.ini"; \
+		echo "Error: txt_file not found in [slurm_zarr_groupby_aggregator] section of config.yaml"; \
 		exit 1; \
 	fi; \
 	if [ ! -f "config/$$config_file" ]; then \
@@ -591,22 +593,24 @@ slurm_zarr_groupby_aggregator:
 	input_path="$$(realpath config/$$config_file)"; \
 	base_name="$$(basename $$config_file .txt)"; \
 	output_path="data/aggregated/$${base_name}_aggregated.zarr"; \
-	echo "Using config file from config.ini: config/$$config_file"; \
+	echo "Using config file from config.yaml: config/$$config_file"; \
 	echo "Output will be saved to: $$output_path"; \
-	slurm_account=$$(grep -E "^slurm_account\s*=" config.ini | cut -d'=' -f2 | tr -d ' '); \
+	slurm_account=$$($(PYTHON_INTERPRETER) scripts/get_config_value.py --section SLURM --key slurm_account --fallback ""); \
 	if [ -z "$$slurm_account" ]; then \
 		echo "Warning: slurm_account not found in config.ini, proceeding without --account flag"; \
 	else \
 		echo "Using SLURM account: $$slurm_account"; \
 	fi; \
-	cpus_per_task=$$(awk -F'=' '/^\[slurm_zarr_groupby_aggregator\]/,/^\[/{if(/^cpus-per-task\s*=/) {gsub(/^[ \t]+|[ \t]+$$/, "", $$2); print $$2}}' config.ini); \
-	mem_per_cpu=$$(awk -F'=' '/^\[slurm_zarr_groupby_aggregator\]/,/^\[/{if(/^mem-per-cpu\s*=/) {gsub(/^[ \t]+|[ \t]+$$/, "", $$2); print $$2}}' config.ini); \
-	time=$$(awk -F'=' '/^\[slurm_zarr_groupby_aggregator\]/,/^\[/{if(/^time\s*=/) {gsub(/^[ \t]+|[ \t]+$$/, "", $$2); print $$2}}' config.ini); \
-	if [ -z "$$cpus_per_task" ] || [ -z "$$mem_per_cpu" ] || [ -z "$$time" ]; then \
+	if ! $(PYTHON_INTERPRETER) scripts/get_config_value.py --section slurm_zarr_groupby_aggregator --check-required cpus-per-task mem-per-cpu time >/dev/null 2>&1; then \
 		echo "Error: Missing SLURM parameters in [slurm_zarr_groupby_aggregator] section of config.ini"; \
 		exit 1; \
 	fi; \
+	cpus_per_task=$$($(PYTHON_INTERPRETER) scripts/get_config_value.py --section slurm_zarr_groupby_aggregator --key cpus-per-task); \
+	mem_per_cpu=$$($(PYTHON_INTERPRETER) scripts/get_config_value.py --section slurm_zarr_groupby_aggregator --key mem-per-cpu); \
+	time=$$($(PYTHON_INTERPRETER) scripts/get_config_value.py --section slurm_zarr_groupby_aggregator --key time); \
 	echo "Using SLURM parameters: CPUs=$$cpus_per_task, Memory=$$mem_per_cpu per CPU, Time=$$time"; \
+	app_flags=$$($(PYTHON_INTERPRETER) scripts/get_config_value.py --section slurm_zarr_groupby_aggregator --get-flags); \
+	echo "Using application flags: $$app_flags"; \
 	mkdir -p data/aggregated logs; \
 	echo "Submitting SLURM job for cross-file aggregation..."; \
 	job_name="zarr_groupby_$${base_name}"; \
@@ -614,11 +618,11 @@ slurm_zarr_groupby_aggregator:
 	if [ -n "$$slurm_account" ]; then \
 		jobid=$$(sbatch --parsable --account="$$slurm_account" --time="$$time" --cpus-per-task="$$cpus_per_task" --mem-per-cpu="$$mem_per_cpu" \
 			--job-name="$$job_name" --output="$$log_file" \
-			--wrap="source ~/.bashrc && conda activate $(PROJECT_NAME) && $(PYTHON_INTERPRETER) post_varloc_data_pipeline/zarr_groupby_aggregator.py --file-list '$$input_path' --output '$$output_path'   --export-tsv --keep-all-columns --row-count-cutoff 10"); \
+			--wrap="source ~/.bashrc && conda activate $(PROJECT_NAME) && $(PYTHON_INTERPRETER) post_varloc_data_pipeline/zarr_groupby_aggregator.py --file-list '$$input_path' --output '$$output_path' $$app_flags"); \
 	else \
 		jobid=$$(sbatch --parsable --time="$$time" --cpus-per-task="$$cpus_per_task" --mem-per-cpu="$$mem_per_cpu" \
 			--job-name="$$job_name" --output="$$log_file" \
-			--wrap="source ~/.bashrc && conda activate $(PROJECT_NAME) && $(PYTHON_INTERPRETER) post_varloc_data_pipeline/zarr_groupby_aggregator.py --file-list '$$input_path' --output '$$output_path'  --export-tsv --keep-all-columns --row-count-cutoff 10"); \
+			--wrap="source ~/.bashrc && conda activate $(PROJECT_NAME) && $(PYTHON_INTERPRETER) post_varloc_data_pipeline/zarr_groupby_aggregator.py --file-list '$$input_path' --output '$$output_path' $$app_flags"); \
 	fi; \
 	echo "Submitted job $$jobid for aggregation of files listed in $$config_file"; \
 	echo "Output will be: $$output_path (Zarr) and $$output_path.tsv (TSV export)"; \
@@ -645,9 +649,9 @@ slurm_zarr_groupby_aggregator:
 ## Generate row counts only using SLURM batch jobs (minimal pivot with only ROW_COUNT)
 .PHONY: slurm_zarr_groupby_aggregator_row_count
 slurm_zarr_groupby_aggregator_row_count:
-	@config_file=$$(sed -n '/^\[slurm_zarr_groupby_aggregator_row_count\]/,/^\[/p' config.ini | grep '^txt_file' | cut -d'=' -f2 | tr -d ' '); \
+	@config_file=$$($(PYTHON_INTERPRETER) scripts/get_config_value.py --section slurm_zarr_groupby_aggregator_row_count --key txt_file); \
 	if [ -z "$$config_file" ]; then \
-		echo "Error: txt_file not found in [slurm_zarr_groupby_aggregator_row_count] section of config.ini"; \
+		echo "Error: txt_file not found in [slurm_zarr_groupby_aggregator_row_count] section of config.yaml"; \
 		exit 1; \
 	fi; \
 	if [ ! -f "config/$$config_file" ]; then \
@@ -657,22 +661,24 @@ slurm_zarr_groupby_aggregator_row_count:
 	input_path="$$(realpath config/$$config_file)"; \
 	base_name="$$(basename $$config_file .txt)"; \
 	output_path="data/row_count/$${base_name}_row_count.zarr"; \
-	echo "Using config file from config.ini: config/$$config_file"; \
+	echo "Using config file from config.yaml: config/$$config_file"; \
 	echo "Output will be saved to: $$output_path"; \
-	slurm_account=$$(grep -E "^slurm_account\s*=" config.ini | cut -d'=' -f2 | tr -d ' '); \
+	slurm_account=$$($(PYTHON_INTERPRETER) scripts/get_config_value.py --section SLURM --key slurm_account --fallback ""); \
 	if [ -z "$$slurm_account" ]; then \
-		echo "Warning: slurm_account not found in config.ini, proceeding without --account flag"; \
+		echo "Warning: slurm_account not found in config.yaml, proceeding without --account flag"; \
 	else \
 		echo "Using SLURM account: $$slurm_account"; \
 	fi; \
-	cpus_per_task=$$(awk -F'=' '/^\[slurm_zarr_groupby_aggregator_row_count\]/,/^\[/{if(/^cpus-per-task\s*=/) {gsub(/^[ \t]+|[ \t]+$$/, "", $$2); print $$2}}' config.ini); \
-	mem_per_cpu=$$(awk -F'=' '/^\[slurm_zarr_groupby_aggregator_row_count\]/,/^\[/{if(/^mem-per-cpu\s*=/) {gsub(/^[ \t]+|[ \t]+$$/, "", $$2); print $$2}}' config.ini); \
-	time=$$(awk -F'=' '/^\[slurm_zarr_groupby_aggregator_row_count\]/,/^\[/{if(/^time\s*=/) {gsub(/^[ \t]+|[ \t]+$$/, "", $$2); print $$2}}' config.ini); \
-	if [ -z "$$cpus_per_task" ] || [ -z "$$mem_per_cpu" ] || [ -z "$$time" ]; then \
-		echo "Error: Missing SLURM parameters in [slurm_zarr_groupby_aggregator_row_count] section of config.ini"; \
+	if ! $(PYTHON_INTERPRETER) scripts/get_config_value.py --section slurm_zarr_groupby_aggregator_row_count --check-required cpus-per-task mem-per-cpu time >/dev/null 2>&1; then \
+		echo "Error: Missing SLURM parameters in [slurm_zarr_groupby_aggregator_row_count] section of config.yaml"; \
 		exit 1; \
 	fi; \
+	cpus_per_task=$$($(PYTHON_INTERPRETER) scripts/get_config_value.py --section slurm_zarr_groupby_aggregator_row_count --key cpus-per-task); \
+	mem_per_cpu=$$($(PYTHON_INTERPRETER) scripts/get_config_value.py --section slurm_zarr_groupby_aggregator_row_count --key mem-per-cpu); \
+	time=$$($(PYTHON_INTERPRETER) scripts/get_config_value.py --section slurm_zarr_groupby_aggregator_row_count --key time); \
 	echo "Using SLURM parameters: CPUs=$$cpus_per_task, Memory=$$mem_per_cpu per CPU, Time=$$time"; \
+	app_flags=$$($(PYTHON_INTERPRETER) scripts/get_config_value.py --section slurm_zarr_groupby_aggregator_row_count --get-flags); \
+	echo "Using application flags: $$app_flags"; \
 	mkdir -p data/row_count logs; \
 	echo "Submitting SLURM job for row count generation (minimal pivot)..."; \
 	job_name="zarr_rowcount_$${base_name}"; \
@@ -680,11 +686,11 @@ slurm_zarr_groupby_aggregator_row_count:
 	if [ -n "$$slurm_account" ]; then \
 		jobid=$$(sbatch --parsable --account="$$slurm_account" --time="$$time" --cpus-per-task="$$cpus_per_task" --mem-per-cpu="$$mem_per_cpu" \
 			--job-name="$$job_name" --output="$$log_file" \
-			--wrap="source ~/.bashrc && conda activate $(PROJECT_NAME) && $(PYTHON_INTERPRETER) post_varloc_data_pipeline/zarr_groupby_aggregator.py --file-list '$$input_path' --output '$$output_path' --workers 8 --export-tsv --row-count-only"); \
+			--wrap="source ~/.bashrc && conda activate $(PROJECT_NAME) && $(PYTHON_INTERPRETER) post_varloc_data_pipeline/zarr_groupby_aggregator.py --file-list '$$input_path' --output '$$output_path' $$app_flags"); \
 	else \
 		jobid=$$(sbatch --parsable --time="$$time" --cpus-per-task="$$cpus_per_task" --mem-per-cpu="$$mem_per_cpu" \
 			--job-name="$$job_name" --output="$$log_file" \
-			--wrap="source ~/.bashrc && conda activate $(PROJECT_NAME) && $(PYTHON_INTERPRETER) post_varloc_data_pipeline/zarr_groupby_aggregator.py --file-list '$$input_path' --output '$$output_path' --workers 8 --export-tsv --row-count-only"); \
+			--wrap="source ~/.bashrc && conda activate $(PROJECT_NAME) && $(PYTHON_INTERPRETER) post_varloc_data_pipeline/zarr_groupby_aggregator.py --file-list '$$input_path' --output '$$output_path' $$app_flags"); \
 	fi; \
 	echo "Submitted job $$jobid for row count generation of files listed in $$config_file"; \
 	echo "Output will be: $$output_path (Zarr) and $$output_path.tsv (TSV export)"; \

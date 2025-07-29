@@ -4,8 +4,8 @@ from dotenv import load_dotenv, find_dotenv
 from loguru import logger
 import os
 
-import configparser
 import yaml
+
 
 # Load environment variables from .env file if it exists
 load_dotenv(find_dotenv())
@@ -25,17 +25,6 @@ MODELS_DIR = PROJ_ROOT / "models"
 
 
 
-def parse_ini(ini_path=None):
-    """
-    Parse the config.ini file and return a ConfigParser object.
-    If ini_path is None, defaults to PROJ_ROOT/config.ini.
-    """
-    if ini_path is None:
-        ini_path = PROJ_ROOT / "config.ini"
-    config = configparser.ConfigParser()
-    config.read(str(ini_path))
-    return config
-
 def parse_yaml(yaml_path=None):
     """
     Parse a YAML file and return the loaded dictionary.
@@ -48,32 +37,32 @@ def parse_yaml(yaml_path=None):
 
 def parse_config(config_path=None):
     """
-    Parse a config file (INI or YAML) and return the appropriate object.
-    If config_path is None, tries config.ini then config.yaml in PROJ_ROOT.
+    Parse a YAML config file and return the loaded dictionary.
+    If config_path is None, uses config.yaml in PROJ_ROOT.
     """
     if config_path is None:
-        ini_path = PROJ_ROOT / "config.ini"
         yaml_path = PROJ_ROOT / "config.yaml"
-        if ini_path.exists():
-            config_path = ini_path
-        elif yaml_path.exists():
+        if yaml_path.exists():
             config_path = yaml_path
         else:
-            raise FileNotFoundError("No config.ini or config.yaml found in project root.")
+            raise FileNotFoundError("No config.yaml found in project root.")
     config_path = Path(config_path)
-    if config_path.suffix in ['.yaml', '.yml']:
-        return parse_yaml(config_path)
-    else:
-        return parse_ini(config_path)
+    return parse_yaml(config_path)
 
 
-def get_ini_value(section, key, ini_path=None, fallback=None):
+def get_config_value(section, key, fallback=None):
     """
-    Get a value from the config.ini file by section and key.
-    Returns fallback if not found.
+    Get a configuration value from YAML format.
+
+    Args:
+        section: Configuration section name
+        key: Configuration key name
+        fallback: Fallback value if not found
+
+    Returns:
+        Configuration value or fallback
     """
-    config = parse_ini(ini_path)
-    return config.get(section, key, fallback=fallback)
+    return get_yaml_value([section, key], fallback=fallback)
 
 def get_yaml_value(key_path, yaml_path=None, fallback=None):
     """
