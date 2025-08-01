@@ -47,6 +47,56 @@ slurm_zarr_groupby_aggregator_row_count:
   export_tsv: true
   row_count_only: true
 
+# filter settings for
+slurm_additional_zarr_filtering:
+  cpus-per-task: 2
+  mem-per-cpu: 7G
+  time: "1:00:00"
+  txt_file: zarr_files_for_additional_filtering.txt
+  export_tsv: true
+
+# Additional Zarr filtering configuration
+ADDITIONAL_ZARR_FILTERING:
+  OUTPUT_DIR: data/additional_filtering
+  GENE_FILTER: references/paper_and_2024_combined_reformatted_for_search.xlsx
+  BED_FILE: references/bedfiles/GWAS_GOI.bed
+  DROP_COLUMNS:
+  - ANN['Feature']
+  COLUMN_ORDER_START:
+    - CHROM
+    - POS
+    - REF
+    - ALT
+    - "ANN['SYMBOL']"
+    - "ANN['IMPACT']"
+    - "ANN['VARIANT_CLASS']"
+    - "ANN['AF']"
+    - "ANN['REVEL']"
+    - ID
+    - "ANN['DISTANCE']"
+    - "ANN['Codons']"
+    - "ANN['Amino_acids']"
+    - "ANN['Allele']"
+    - "ANN['Gene']"
+    - "ANN['Feature_type']"
+    - "ANN['HGVSp']"
+    - SAMPLE
+    - "ANN['HGVSc']"
+    - "ANN['MAX_AF']"
+    - "INFO['SVLEN']"
+    - "ANN['Consequence']"
+    - "ANN['Protein_position']"
+    - "ANN['HGVSg']"
+    - "INFO['known_E_ExAC']"
+    - "INFO['known_CLIN_histocompatibility']"
+    - "ANN['MOTIF_NAME']"
+    - "ANN['PHENO']"
+    - "ANN['MANE_SELECT']"
+    - "ANN['LoFtool']"
+    - family
+    - "FORMAT['SAOBS']"
+    - "FORMAT['SROBS']"
+
 # Sample information
 SAMPLE_INFO:
   family: false
@@ -288,97 +338,3 @@ FILTERS:
   # Filter variants with MAX_AF above 0.2 (keep only rare variants)
   "ANN['MAX_AF']": "<=:0.2"
 
-# Additional Zarr filtering configuration
-ADDITIONAL_ZARR_FILTERING:
-  OUTPUT_DIR: data/additional_filtering
-  GENE_FILTER: references/paper_and_2024_combined_reformatted_for_search.xlsx
-  COLUMN_ORDER:
-    - CHROM
-    - POS
-    - REF
-    - ALT
-    - "ANN['SYMBOL']"
-    - index
-    - "ANN['HGVS_OFFSET']"
-    - "ANN['REVEL']"
-    - "ANN['Codons']"
-    - "ANN['Amino_acids']"
-    - "ANN['HIGH_INF_POS']"
-    - "INFO['known_CLIN_other']"
-    - "INFO['CIEND']"
-    - "ANN['Feature_type']"
-    - "ANN['HGVSp']"
-    - SAMPLE
-    - "ANN['CANONICAL']"
-    - "INFO['PROB_ABSENT']"
-    - "ANN['AF']"
-    - "INFO['known_CLIN_pathogenic']"
-    - "INFO['known_CLIN_protective']"
-    - "ANN['Consequence']"
-    - "ANN['Protein_position']"
-    - "ANN['HGVSg']"
-    - "INFO['known_E_ExAC']"
-    - "INFO['known_CLIN_histocompatibility']"
-    - "ANN['MOTIF_NAME']"
-    - "ANN['PHENO']"
-    - FILTER
-    - "FORMAT['RPB']"
-    - "ANN['DISTANCE']"
-    - "FORMAT['ROB']"
-    - "ANN['MANE_SELECT']"
-    - "ANN['LoFtool']"
-    - "INFO['known_TSA']"
-    - "ANN['BIOTYPE']"
-    - "INFO['known_CLIN_benign']"
-    - "INFO['SVTYPE']"
-    - "ANN['ENSP']"
-    - "INFO['known_E_Multiple_observations']"
-    - "ANN['UNIPROT_ISOFORM']"
-    - "INFO['MATEID']"
-    - "INFO['known_CLIN_confers_sensitivity']"
-    - QUAL
-    - "FORMAT['SAOBS']"
-    - 13340-JD-10_AF
-    - "FORMAT['ALB']"
-    - "ANN['Feature']"
-    - "INFO['known_E_Hapmap']"
-    - "ANN['MOTIF_SCORE_CHANGE']"
-    - "ANN['CDS_position']"
-    - FILENAME
-    - filename
-    - "INFO['known_E_TOPMed']"
-    - "ANN['HGVSc']"
-    - "ANN['MAX_AF']"
-    - "INFO['SVLEN']"
-    - "INFO['known_CLIN_likely_pathogenic']"
-    - "ANN['MANE_PLUS_CLINICAL']"
-    - "INFO['known_COSMIC_98']"
-    - "ANN['SOMATIC']"
-    - "INFO['known_CLIN_uncertain_significance']"
-    - "FORMAT['OOBS']"
-    - "ANN['IMPACT']"
-    - "INFO['PROB_VARIANTS_UPDATE']"
-    - "INFO['known_dbSNP_156']"
-    - "ANN['VARIANT_CLASS']"
-    - "INFO['known_E_Phenotype_or_Disease']"
-    - "FORMAT['DP']"
-    - "INFO['ALT_INDEL_OPERATIONS']"
-    - "ANN['cDNA_position']"
-    - "ANN['CLIN_SIG']"
-    - "INFO['known_AA']"
-    - "ANN['Existing_variation']"
-    - ID
-    - "ANN['Allele']"
-    - "INFO['PROB_ARTIFACT']"
-    - "INFO['IMPRECISE']"
-    - "INFO['known_CLIN_association']"
-    - "INFO['END']"
-    - "ANN['SIFT']"
-    - "INFO['known_CLIN_risk_factor']"
-    - "INFO['known_ClinVar_202306']"
-    - "INFO['known_CLIN_likely_benign']"
-    - family
-    - "FORMAT['SROBS']"
-    - "ANN['Gene']"
-    - "ANN['PolyPhen']"
-    - ROW_COUNT

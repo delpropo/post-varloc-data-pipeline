@@ -1,0 +1,4 @@
+ADDITIONAL_ZARR_FILTERING:
+  OUTPUT_DIR: tests/data/additional_filtering/output
+  BED_FILE: tests/data/additional_filtering/test.bed
+  DROP_COLUMNS: []

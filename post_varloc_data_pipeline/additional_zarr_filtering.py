@@ -2,8 +2,8 @@
 """
 Additional Zarr Filtering Tool
 
-This program reads a specified Zarr file and applies gene filtering based on configuration.
-It implements GENE and rsID FILTERING logic for genomic data.
+This program reads a specified Zarr file and applies filtering based on configuration.
+It implements GENE, rsID, and BED region FILTERING logic for genomic data.
 The filtered file is saved in data/additional_filtering with 'add_filter' added to the filename before '.zarr'.
 
 Usage:
@@ -12,10 +12,13 @@ Usage:
 
 Configuration:
     - Uses config.yaml for configuration
-    - Gene filter file specified in [ADDITIONAL_ZARR_FILTERING] section: gene_filter = filename
+    - Gene filter file specified in [ADDITIONAL_ZARR_FILTERING] section: GENE_FILTER = filename
+    - BED file specified in [ADDITIONAL_ZARR_FILTERING] section: BED_FILE = filename
     - Gene filter file can be TSV, CSV, or Excel (.xlsx/.xls)
     - Supports filtering by gene symbols (Symbol/Gene Symbol column) and/or rsIDs (rsID column)
-    - Rows matching either gene symbols or rsIDs are kept (OR logic)
+    - BED file filtering keeps variants within specified genomic regions (chr, start, stop)
+    - Rows matching any of the criteria are kept (OR logic)
+    - Can run with gene filtering only, BED filtering only, or both
 """
 
 import argparse
@@ -24,9 +27,11 @@ import xarray as xr
 import warnings
 from pathlib import Path
 import sys
+import os
 
-# Import our centralized configuration functions
-from .config import get_config_value
+# Add parent directory to path to access the config module
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from post_varloc_data_pipeline.config import parse_yaml
 
 # Suppress Zarr warnings
 warnings.filterwarnings('ignore', message='.*vlen-utf8.*')
@@ -40,22 +45,114 @@ class AdditionalZarrFilter:
     def __init__(self, config_file=None):
         """Initialize with configuration file (uses config.yaml by default)."""
         self.config_file = config_file or "config.yaml"
+        self.config = None
         self.gene_filter_symbols = None
         self.gene_filter_rsids = None
+        self.bed_regions = None
+        self.load_config(self.config_file)
+
+    def load_config(self, config_file: str) -> None:
+        """Load configuration from YAML file."""
+        self.config = parse_yaml(config_file)
 
     def get_output_dir_from_config(self):
         """Get output directory from configuration."""
-        output_dir = get_config_value('ADDITIONAL_ZARR_FILTERING', 'OUTPUT_DIR',
-                                    fallback="data/additional_filtering")
+        output_dir = "data/additional_filtering"  # default
+        if 'ADDITIONAL_ZARR_FILTERING' in self.config and 'OUTPUT_DIR' in self.config['ADDITIONAL_ZARR_FILTERING']:
+            output_dir = self.config['ADDITIONAL_ZARR_FILTERING']['OUTPUT_DIR']
         print(f"Using output directory: {output_dir}")
         return output_dir
 
     def get_gene_filter_from_config(self):
         """Get gene filter file path from configuration."""
-        gene_filter_file = get_config_value('ADDITIONAL_ZARR_FILTERING', 'GENE_FILTER')
+        gene_filter_file = None
+        if 'ADDITIONAL_ZARR_FILTERING' in self.config and 'GENE_FILTER' in self.config['ADDITIONAL_ZARR_FILTERING']:
+            gene_filter_file = self.config['ADDITIONAL_ZARR_FILTERING']['GENE_FILTER']
         if gene_filter_file:
             print(f"Found gene filter in config: {gene_filter_file}")
         return gene_filter_file
+
+    def get_bed_file_from_config(self):
+        """Get BED file path from configuration."""
+        bed_file = None
+        if 'ADDITIONAL_ZARR_FILTERING' in self.config and 'BED_FILE' in self.config['ADDITIONAL_ZARR_FILTERING']:
+            bed_file = self.config['ADDITIONAL_ZARR_FILTERING']['BED_FILE']
+        if bed_file:
+            print(f"Found BED file in config: {bed_file}")
+        return bed_file
+
+    def get_columns_to_drop(self):
+        """Get list of columns to drop from configuration."""
+        drop_columns = []
+        if 'ADDITIONAL_ZARR_FILTERING' in self.config and 'DROP_COLUMNS' in self.config['ADDITIONAL_ZARR_FILTERING']:
+            drop_config = self.config['ADDITIONAL_ZARR_FILTERING']['DROP_COLUMNS']
+            if isinstance(drop_config, list):
+                # Handle YAML list format
+                drop_columns.extend([col.strip() for col in drop_config if col.strip()])
+            else:
+                # Handle comma-separated string format
+                drop_columns.extend([col.strip() for col in drop_config.split(',') if col.strip()])
+
+        # Remove empty strings and duplicates
+        drop_columns = list(set([col for col in drop_columns if col.strip()]))
+        return drop_columns
+
+    def apply_column_dropping(self, df):
+        """Drop specified columns from DataFrame."""
+        drop_columns = self.get_columns_to_drop()
+        if not drop_columns:
+            print("No columns configured to drop")
+            return df
+
+        print("\n🗑️  COLUMN DROPPING:")
+        print(f"   Columns to drop from config: {drop_columns}")
+
+        # Only drop columns that actually exist in the DataFrame
+        columns_to_drop = [col for col in drop_columns if col in df.columns]
+        missing_drop_columns = [col for col in drop_columns if col not in df.columns]
+
+        if missing_drop_columns:
+            print(f"   Warning: Columns not found in data: {missing_drop_columns}")
+
+        if columns_to_drop:
+            original_column_count = len(df.columns)
+            df_dropped = df.drop(columns=columns_to_drop)
+            print(f"   ✓ Dropped {len(columns_to_drop)} columns: {columns_to_drop}")
+            print(f"   Columns remaining: {len(df_dropped.columns)} (was {original_column_count})")
+            return df_dropped
+        else:
+            print("   No matching columns found to drop")
+            return df
+
+    def load_bed_file(self, bed_file):
+        """Load genomic regions from BED file for filtering."""
+        try:
+            # Read BED file
+            bed_df = pd.read_csv(bed_file, sep='\t', header=None)
+
+            # Verify minimum 3 columns
+            if len(bed_df.columns) < 3:
+                raise ValueError("BED file must have at least 3 columns (chr, start, stop)")
+
+            # Process chromosome names to handle 'chr' prefix
+            bed_df[0] = bed_df[0].astype(str).str.lower().str.replace('chr', '')
+
+            # Convert coordinates to integers
+            bed_df[1] = bed_df[1].astype(int)
+            bed_df[2] = bed_df[2].astype(int)
+
+            # Store as list of tuples (chr, start, stop) - only first 3 columns
+            self.bed_regions = [(row[0], row[1], row[2]) for row in bed_df.itertuples(index=False, name=None)]
+            print(f"✓ Loaded {len(self.bed_regions)} regions from BED file")
+            print("  Example regions:")
+            for i, region in enumerate(self.bed_regions[:3]):
+                print(f"    Region {i+1}: Chr {region[0]}, {region[1]}-{region[2]}")
+            if len(self.bed_regions) > 3:
+                print(f"    ... and {len(self.bed_regions)-3} more regions")
+
+        except Exception as e:
+            print(f"Error loading BED file '{bed_file}': {e}")
+            raise
 
     def load_gene_filter(self, gene_filter_file):
         """Load gene symbols and rsIDs from TSV/CSV/Excel file for filtering."""
@@ -127,21 +224,59 @@ class AdditionalZarrFilter:
             print(f"Error loading gene filter file '{gene_filter_file}': {e}")
             raise
 
-            print(f"✓ Loaded {len(self.gene_filter_symbols)} gene symbols for filtering")
-            print(f"  Example genes: {list(self.gene_filter_symbols)[:5]}")
-
-        except Exception as e:
-            print(f"Error loading gene filter file '{gene_filter_file}': {e}")
-            raise
-
     def apply_gene_filter(self, df):
-        """Apply gene and rsID filtering."""
-        if not self.gene_filter_symbols and not self.gene_filter_rsids:
-            print("No gene or rsID filters loaded - returning original data")
+        """Apply gene, rsID, and BED region filtering."""
+        if not self.gene_filter_symbols and not self.gene_filter_rsids and not self.bed_regions:
+            print("No gene, rsID, or BED region filters loaded - returning original data")
             return df
 
         original_rows = len(df)
         masks = []
+
+        # Apply BED region filtering if available
+        if self.bed_regions and 'CHROM' in df.columns and 'POS' in df.columns:
+            print(f"🛏️  Applying BED region filtering with {len(self.bed_regions)} regions...")
+            print(f"    Data has {len(df)} rows to check")
+
+            def check_bed_overlap(row):
+                # Convert chromosome format to match BED (remove 'chr' if present)
+                chrom = str(row['CHROM']).lower().replace('chr', '')
+                try:
+                    pos = int(row['POS'])
+                except (ValueError, TypeError):
+                    return False  # Skip rows with invalid positions
+
+                # Check each BED region for overlap
+                for region in self.bed_regions:
+                    bed_chrom, bed_start, bed_end = region
+                    if (chrom == str(bed_chrom).lower() and
+                        int(bed_start) <= pos <= int(bed_end)):
+                        return True
+                return False
+
+            bed_mask = df.apply(check_bed_overlap, axis=1)
+            masks.append(bed_mask)
+            bed_matches = bed_mask.sum()
+            print(f"🛏️  BED REGION FILTERING: {bed_matches:,} rows match BED regions")
+            print(f"    {len(df) - bed_matches:,} rows will be filtered out")
+
+            # Debug: show some examples of what was kept/filtered
+            if len(df) > 0:
+                kept_examples = df[bed_mask].head(3)
+                if len(kept_examples) > 0:
+                    print("   Examples of KEPT rows:")
+                    for idx, row in kept_examples.iterrows():
+                        chrom = str(row['CHROM']).lower().replace('chr', '')
+                        pos = row['POS']
+                        print(f"     Chr {chrom}, Pos {pos}")
+
+                filtered_examples = df[~bed_mask].head(3)
+                if len(filtered_examples) > 0:
+                    print("   Examples of FILTERED OUT rows:")
+                    for idx, row in filtered_examples.iterrows():
+                        chrom = str(row['CHROM']).lower().replace('chr', '')
+                        pos = row['POS']
+                        print(f"     Chr {chrom}, Pos {pos}")
 
         # Apply gene symbol filtering if available
         if self.gene_filter_symbols and "ANN['SYMBOL']" in df.columns:
@@ -221,8 +356,9 @@ class AdditionalZarrFilter:
         if not input_path.exists():
             raise FileNotFoundError(f"Input Zarr file not found: {input_path}")
 
-        # Get gene filter file from config
+        # Get filter files from config
         gene_filter_file = self.get_gene_filter_from_config()
+        bed_file = self.get_bed_file_from_config()
 
         # Load gene filter if available
         if gene_filter_file:
@@ -233,6 +369,15 @@ class AdditionalZarrFilter:
         else:
             print("No gene filter specified - processing without gene filtering")
 
+        # Load BED file if available
+        if bed_file:
+            bed_file_path = Path(bed_file)
+            if not bed_file_path.exists():
+                raise FileNotFoundError(f"BED file not found: {bed_file}")
+            self.load_bed_file(bed_file)
+        else:
+            print("No BED file specified - processing without BED region filtering")
+
         # Load the Zarr file
         print("Loading Zarr data...")
         ds = xr.open_zarr(str(input_path))
@@ -241,7 +386,12 @@ class AdditionalZarrFilter:
         print(f"Original data shape: {df.shape}")
 
         # Apply gene filtering
-        filtered_df = self.apply_gene_filter(df)        # Determine output path
+        filtered_df = self.apply_gene_filter(df)
+
+        # Apply column dropping
+        filtered_df = self.apply_column_dropping(filtered_df)
+
+        # Determine output path
         if output_path is None:
             # Get output directory from config
             output_dir_str = self.get_output_dir_from_config()
@@ -284,6 +434,11 @@ class AdditionalZarrFilter:
             ds_filtered.attrs['gene_filter_count'] = gene_count
             ds_filtered.attrs['rsid_filter_count'] = rsid_count
 
+        if bed_file:
+            ds_filtered.attrs['bed_file'] = str(bed_file)
+            bed_count = len(self.bed_regions) if self.bed_regions else 0
+            ds_filtered.attrs['bed_region_count'] = bed_count
+
         # Add column information
         column_dtypes = {col: str(df_clean[col].dtype) for col in df_clean.columns}
         ds_filtered.attrs['column_dtypes'] = str(column_dtypes)
@@ -302,7 +457,7 @@ class AdditionalZarrFilter:
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Apply gene and rsID filtering to Zarr files",
+        description="Apply gene, rsID, and BED region filtering to Zarr files",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -325,10 +480,13 @@ Output:
 
 Configuration:
   - Uses config.yaml for configuration
-  - Gene filter file must be specified in [ADDITIONAL_ZARR_FILTERING] section: GENE_FILTER = filename
+  - Gene filter file can be specified in [ADDITIONAL_ZARR_FILTERING] section: GENE_FILTER = filename
+  - BED file can be specified in [ADDITIONAL_ZARR_FILTERING] section: BED_FILE = filename
+  - Can use gene filtering, BED region filtering, or both
   - Gene filter file supports TSV, CSV, and Excel formats
   - Filters by gene symbols (Symbol/Gene Symbol column) and/or rsIDs (rsID column)
-  - Uses OR logic: keeps rows matching either gene symbols or rsIDs
+  - BED file filtering keeps variants within specified genomic regions
+  - Uses OR logic: keeps rows matching any of the filtering criteria
         """
     )
 
@@ -353,10 +511,19 @@ Configuration:
         # Export TSV if requested
         if args.export_tsv:
             # Determine column order from config if available
-            column_order_str = get_config_value('ADDITIONAL_ZARR_FILTERING', 'COLUMN_ORDER')
-            column_order = None
-            if column_order_str:
-                column_order = [col.strip() for col in column_order_str.split(',')]
+            column_order_start = None
+            if (hasattr(filter_processor, 'config') and filter_processor.config and
+                'ADDITIONAL_ZARR_FILTERING' in filter_processor.config and
+                'COLUMN_ORDER_START' in filter_processor.config['ADDITIONAL_ZARR_FILTERING']):
+                column_order_start = filter_processor.config['ADDITIONAL_ZARR_FILTERING']['COLUMN_ORDER_START']
+
+            # Handle both string (comma-separated) and list formats
+            priority_columns = []
+            if column_order_start:
+                if isinstance(column_order_start, list):
+                    priority_columns = column_order_start
+                else:
+                    priority_columns = [col.strip() for col in column_order_start.split(',')]
 
             # Determine TSV output path
             if args.tsv_output:
@@ -378,13 +545,17 @@ Configuration:
                     elif export_df[col].dtype.name == 'boolean':
                         export_df[col] = export_df[col].astype('object')  # Will show None for missing
 
-            # Reorder columns if column_order is specified and valid
-            if column_order:
-                # Only use columns that exist in the DataFrame
-                valid_order = [col for col in column_order if col in export_df.columns]
-                remaining_cols = [col for col in export_df.columns if col not in valid_order]
+            # Reorder columns if priority_columns is specified and valid
+            if priority_columns:
+                # Only use priority columns that exist in the DataFrame
+                valid_priority_order = [col for col in priority_columns if col in export_df.columns]
+                # Get remaining columns (not in priority list)
+                remaining_cols = [col for col in export_df.columns if col not in valid_priority_order]
+                # Sort remaining columns alphabetically
                 remaining_cols_sorted = sorted(remaining_cols)
-                export_df = export_df[valid_order + remaining_cols_sorted]
+                # Reorder: priority columns first, then remaining columns sorted
+                export_df = export_df[valid_priority_order + remaining_cols_sorted]
+                print(f"✓ Column reordering applied: {len(valid_priority_order)} priority columns at start, {len(remaining_cols_sorted)} remaining columns sorted")
 
             # Save to TSV
             export_df.to_csv(tsv_path, sep='\t', index=False, na_rep='.')
